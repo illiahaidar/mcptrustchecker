@@ -32,6 +32,7 @@ import { GRADE_RANK } from '../scoring/model.js';
 import { RULE_CATALOG, findRule } from '../data/ruleCatalog.js';
 import { METHODOLOGY_VERSION, TOOL_VERSION } from '../version.js';
 import { c } from '../util/ansi.js';
+import { parseHeaderArgs } from '../util/headers.js';
 
 const KNOWN_COMMANDS = new Set(['scan', 'pin', 'diff', 'rules', 'explain', 'version', 'help']);
 
@@ -55,6 +56,9 @@ ${c.bold('Usage')}
 ${c.bold('Targets')}
   path/to/tools.json               a pre-generated manifest (offline)
   https://host/mcp                 a live Streamable-HTTP / SSE endpoint
+  --login                          OAuth browser sign-in for a protected endpoint (opens your browser)
+  --scope <scope>                  OAuth scope to request with --login (e.g. mcp:tools)
+  --header "Authorization: Bearer …"   static auth header instead of --login (repeatable)
   claude_desktop_config.json       a client config (scans each server)
   @scope/package                   supply-chain / typosquat check (add --online for metadata)
   --command "npx -y my-server"     spawn a local stdio server (sandboxed)
@@ -112,6 +116,9 @@ async function main(): Promise<number | void> {
         command: { type: 'string' },
         args: { type: 'string' },
         env: { type: 'string', multiple: true },
+        header: { type: 'string', multiple: true },
+        login: { type: 'boolean' },
+        scope: { type: 'string' },
         url: { type: 'string' },
         online: { type: 'boolean' },
         run: { type: 'boolean' },
@@ -194,8 +201,21 @@ async function main(): Promise<number | void> {
     envVars: parseEnvFlags(values.env),
     allowAnyCommand: values['allow-any-command'],
     allowedHosts: values['allowed-hosts'] ? values['allowed-hosts'].split(',').map((h) => h.trim()) : undefined,
+    headers: parseHeaderArgs(values.header),
+    login: values.login,
+    scope: values.scope,
     registry: values.registry === 'pypi' ? 'pypi' : 'npm',
   };
+
+  // --login and a static Authorization header are alternative auth methods;
+  // combining them would silently clobber the freshly-minted OAuth token.
+  if (
+    values.login &&
+    resolveOpts.headers &&
+    Object.keys(resolveOpts.headers).some((h) => h.toLowerCase() === 'authorization')
+  ) {
+    fail('--login cannot be combined with a static --header "Authorization: …" — choose one auth method.');
+  }
 
   let resolved: ResolvedTarget[] = [];
   if (autoDiscover) {

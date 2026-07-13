@@ -21,6 +21,8 @@
 
 import type { PromptDef, ResourceDef, ServerSurface, ToolDef } from '../types.js';
 import { surfaceFromManifest } from './manifest.js';
+import { TOOL_VERSION } from '../version.js';
+import { applyCredentialGate } from '../util/headers.js';
 
 /** Executables permitted for stdio acquisition (the canonical safe set). */
 export const ALLOWED_COMMANDS = new Set(['npx', 'uvx', 'python', 'python3', 'node', 'docker', 'deno']);
@@ -145,6 +147,20 @@ export interface LiveOptions {
   allowedHosts?: string[];
   /** Block private/loopback/link-local hosts (set for untrusted, config-derived URLs). */
   blockPrivateHosts?: boolean;
+  /**
+   * Extra request headers (e.g. `Authorization: Bearer …`) for HTTP acquisition
+   * of protected endpoints. Sent ONLY to the target host — never forwarded to a
+   * redirect on a different host, so the credential can't leak.
+   */
+  headers?: Record<string, string>;
+  /**
+   * Perform an interactive OAuth 2.0 browser sign-in for endpoints that require
+   * it (the MCP authorization flow). Opens the user's browser; tokens live in
+   * memory for the scan only.
+   */
+  login?: boolean;
+  /** Optional OAuth scope to request during `login` (e.g. `mcp:tools`). */
+  scope?: string;
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -166,17 +182,19 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 /* eslint-disable @typescript-eslint/no-explicit-any */
 async function loadSdk(): Promise<any> {
   try {
-    const [{ Client }, stdio, http, sse] = await Promise.all([
+    const [{ Client }, stdio, http, sse, auth] = await Promise.all([
       import('@modelcontextprotocol/sdk/client/index.js'),
       import('@modelcontextprotocol/sdk/client/stdio.js'),
       import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
       import('@modelcontextprotocol/sdk/client/sse.js'),
+      import('@modelcontextprotocol/sdk/client/auth.js'),
     ]);
     return {
       Client,
       StdioClientTransport: (stdio as any).StdioClientTransport,
       StreamableHTTPClientTransport: (http as any).StreamableHTTPClientTransport,
       SSEClientTransport: (sse as any).SSEClientTransport,
+      UnauthorizedError: (auth as any).UnauthorizedError,
     };
   } catch (err) {
     throw new Error(
@@ -310,7 +328,7 @@ export async function acquireStdio(spec: StdioSpec, opts: LiveOptions = {}): Pro
     cwd: spec.cwd ?? process.cwd(),
     stderr: 'pipe',
   });
-  const client = new sdk.Client({ name: 'mcptrustchecker', version: '1.0.0' }, { capabilities: {} });
+  const client = new sdk.Client({ name: 'mcptrustchecker', version: TOOL_VERSION }, { capabilities: {} });
 
   try {
     await withTimeout(client.connect(transport), CONNECT_TIMEOUT_MS, 'stdio connect');
@@ -353,25 +371,47 @@ export async function acquireHttp(url: string, opts: LiveOptions = {}): Promise<
   }
 
   const sdk = await loadSdk();
-  const client = new sdk.Client({ name: 'mcptrustchecker', version: '1.0.0' }, { capabilities: {} });
+  const client = new sdk.Client({ name: 'mcptrustchecker', version: TOOL_VERSION }, { capabilities: {} });
 
   // Re-validate every redirect hop: the initial-URL SSRF check is useless if the
   // server 302s to http://[::ffff:169.254.169.254]/. We follow redirects
   // manually (capped) and run each hop's host back through the same guard.
+  // Re-validate every hop AND contain credentials. The SDK routes ALL its
+  // requests — including OAuth discovery / registration / token endpoints, whose
+  // hosts come from the *server's* metadata — through this fetch, so every hop
+  // (not just 3xx targets) must pass the SSRF guard, and credentials must never
+  // cross to a different origin.
   const guardedFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     let current = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
     for (let hop = 0; hop < 6; hop++) {
-      const res = await fetch(current, { ...init, redirect: 'manual' });
+      let cur: URL;
+      try {
+        cur = new URL(current);
+      } catch {
+        throw new Error(`Invalid request URL "${current}".`);
+      }
+      // SSRF guard on THIS hop's host — covers the initial request too, not just
+      // redirect targets (an OAuth authorization-server host is server-chosen).
+      if (cur.protocol !== 'http:' && cur.protocol !== 'https:')
+        throw new Error(`Blocked request to non-http scheme "${cur.protocol}".`);
+      if (opts.allowedHosts && !opts.allowedHosts.includes(cur.hostname))
+        throw new Error(`Blocked request to disallowed host "${cur.hostname}".`);
+      if (opts.blockPrivateHosts && isBlockedHost(cur.hostname))
+        throw new Error(`SSRF: blocked request to private/loopback host "${cur.hostname}".`);
+
+      // Credentials (the SDK-injected OAuth bearer in init.headers, and any
+      // static --header) go ONLY to the exact target ORIGIN; stripped on any
+      // cross-origin hop (redirect, downgrade, different port).
+      const headers = applyCredentialGate(
+        init?.headers as ConstructorParameters<typeof Headers>[0],
+        cur.origin === parsed.origin,
+        opts.headers,
+      );
+
+      const res = await fetch(current, { ...init, headers, redirect: 'manual' });
       const loc = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
       if (!loc) return res;
-      const next = new URL(loc, current);
-      if (next.protocol !== 'http:' && next.protocol !== 'https:')
-        throw new Error(`Blocked redirect to non-http scheme "${next.protocol}".`);
-      if (opts.allowedHosts && !opts.allowedHosts.includes(next.hostname))
-        throw new Error(`Blocked redirect to disallowed host "${next.hostname}".`);
-      if (opts.blockPrivateHosts && isBlockedHost(next.hostname))
-        throw new Error(`SSRF: blocked redirect to private/loopback host "${next.hostname}".`);
-      current = next.href;
+      current = new URL(loc, current).href;
     }
     throw new Error('Too many redirects.');
   };
@@ -386,8 +426,63 @@ export async function acquireHttp(url: string, opts: LiveOptions = {}): Promise<
     }
   };
 
+  // Interactive OAuth: register a client, open the browser, catch the redirect,
+  // exchange the code for a token, then reconnect authenticated.
+  const connectWithOAuth = async (): Promise<void> => {
+    const { CliOAuthProvider, startCallbackServer, openBrowser } = await import('./oauth.js');
+    const cb = await startCallbackServer();
+    // Flips true the instant the browser sign-in is triggered. After that, a
+    // failure (denied consent, callback timeout, token-exchange error) is NOT a
+    // transport mismatch — we must not restart the flow on SSE (a second browser
+    // window + reuse of the already-settled single-shot callback promise).
+    let authStarted = false;
+    const provider = new CliOAuthProvider(
+      cb.redirectUrl,
+      opts.scope,
+      (authUrl: URL) => {
+        authStarted = true;
+        process.stderr.write(
+          `\n${'→'} This MCP server requires sign-in. Opening your browser…\n` +
+            `  If it doesn't open, paste this URL:\n  ${authUrl.href}\n\n`,
+        );
+        openBrowser(authUrl.href);
+      },
+      cb.state,
+    );
+
+    const attempt = async (TransportCtor: any): Promise<void> => {
+      let transport = new TransportCtor(parsed, { authProvider: provider, fetch: guardedFetch });
+      try {
+        await withTimeout(client.connect(transport), CONNECT_TIMEOUT_MS, 'oauth connect');
+      } catch (err) {
+        if (sdk.UnauthorizedError && err instanceof sdk.UnauthorizedError) {
+          const code = await cb.waitForCode();
+          await transport.finishAuth(code);
+          transport = new TransportCtor(parsed, { authProvider: provider, fetch: guardedFetch });
+          await withTimeout(client.connect(transport), CONNECT_TIMEOUT_MS, 'oauth reconnect');
+        } else {
+          throw err;
+        }
+      }
+    };
+
+    try {
+      try {
+        await attempt(sdk.StreamableHTTPClientTransport);
+      } catch (primary) {
+        // Fall back to SSE ONLY for a pre-auth transport/protocol mismatch; once
+        // the browser has opened, surface the real error instead of re-running
+        // the whole sign-in on a second transport.
+        if (authStarted || (sdk.UnauthorizedError && primary instanceof sdk.UnauthorizedError)) throw primary;
+        await attempt(sdk.SSEClientTransport);
+      }
+    } finally {
+      cb.close();
+    }
+  };
+
   try {
-    await connect();
+    await (opts.login ? connectWithOAuth() : connect());
     const enumd = await enumerate(client);
     const surface = surfaceFromManifest({ ...enumd }, url, url);
     surface.source = { kind: 'http', origin: url };

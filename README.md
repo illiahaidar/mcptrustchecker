@@ -24,7 +24,7 @@
 npx mcptrustchecker                # 🔍 scan every MCP server you already have installed — zero config
 ```
 
-<sub>· offline · deterministic · no account · no API key · <a href="#the-algorithm-the-capability-flow-trust-model">one novel core</a> ·</sub>
+<sub>· offline · deterministic · no account · OAuth browser login for protected servers · <a href="#the-algorithm-the-capability-flow-trust-model">one novel core</a> ·</sub>
 
 </div>
 
@@ -70,7 +70,8 @@ Toxic flows (untrusted-input → sensitive-source → external-sink)
 
 MCP Trust Checker's wedge is **accuracy + explainability + privacy**, with one genuinely novel core — the cross-tool toxic-flow graph. Every property below holds together in a single offline binary — no account, no LLM in the loop, no telemetry:
 
-- 🔒 **Runs 100% offline** — no account, token, API key, or hosted service; your data never leaves the machine.
+- 🔒 **Offline by default** — no account, token, API key, or hosted service; your data never leaves the machine.
+- 🔐 **Scans protected remote servers** — `--login` runs the full **OAuth 2.0 browser sign-in** (discovery → dynamic client registration → PKCE → token), so it can audit auth-gated remote MCP endpoints, not just public ones — something most scanners can't do. (Or pass a static `--header "Authorization: Bearer …"`.) Tokens stay in memory for the scan only.
 - 🎯 **Deterministic** — same input ⇒ byte-identical score, on every run and every machine.
 - 🕸️ **Cross-tool toxic-flow graph** — proves the lethal trifecta statically, composed across tools, not just within one.
 - 🔬 **Reads the code, not just the claim** — when the server's source is available (`scan ./path`), it grades what the implementation *does* (eval / shell-spawn / hardcoded egress / credential reads / obfuscated payloads), so a poisoned server can't hide behind honest-looking tool descriptions. Metadata **and** implementation, in one deterministic pass.
@@ -125,6 +126,8 @@ mcptrustchecker scan ./tools.json                          # an offline manifest
 mcptrustchecker scan ./path/to/mcp-server                  # a local package dir — analyzes the CODE too
 mcptrustchecker scan --command "npx -y @some/mcp-server"   # a local stdio server (sandboxed)
 mcptrustchecker scan https://mcp.example.com/mcp           # a live HTTP/SSE endpoint
+mcptrustchecker scan https://mcp.example.com/mcp --login   # an OAuth-protected endpoint (browser sign-in)
+mcptrustchecker scan https://mcp.example.com/mcp --header "Authorization: Bearer <token>"   # static auth
 mcptrustchecker scan @modelcontextprotocol/server-filesystem --online   # a package name (typosquat/CVE)
 ```
 

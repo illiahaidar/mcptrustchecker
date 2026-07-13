@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 452" width="860" height="452" font-family="SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace" font-size="14">
+  <style>
+    .t { fill:#adbac7; } .g { fill:#768390; } .grn { fill:#3fb950; } .red { fill:#f85149; }
+    .amb { fill:#e3b341; } .wht { fill:#f0f6fc; } .b { font-weight:700; }
+  </style>
+  <rect x="1" y="1" width="858" height="450" rx="12" fill="#0d1117" stroke="#30363d"/>
+  <rect x="1" y="1" width="858" height="42" rx="12" fill="#161b22"/>
+  <rect x="1" y="30" width="858" height="13" fill="#161b22"/>
+  <circle cx="26" cy="22" r="6" fill="#f85149"/>
+  <circle cx="48" cy="22" r="6" fill="#e3b341"/>
+  <circle cx="70" cy="22" r="6" fill="#3fb950"/>
+  <text x="430" y="27" text-anchor="middle" class="g">mcptrustchecker · MCP security scan</text>
+
+  <text x="24" y="78"><tspan class="grn">$</tspan> <tspan class="t">npx mcptrustchecker scan ./tools.json</tspan></text>
+
+  <text x="24" y="114"><tspan class="wht b">MCP Trust Checker</tspan> <tspan class="g">· MCP security scan</tspan></text>
+  <text x="24" y="132" class="g">────────────────────────────────────────────────</text>
+  <text x="24" y="156"><tspan class="g">Target </tspan> <tspan class="t">agent-tools</tspan>  <tspan class="g">(manifest)</tspan></text>
+  <text x="24" y="176"><tspan class="g">Surface</tspan> <tspan class="t">3 tools · 0 prompts · 0 resources</tspan></text>
+
+  <rect x="46" y="198" width="150" height="44" rx="8" fill="none" stroke="#e3b341" stroke-width="1.5"/>
+  <text x="121" y="225" text-anchor="middle" class="amb b" font-size="16">GRADE  D</text>
+  <text x="214" y="216" class="wht b" font-size="15">Trust Score 69/100</text>
+  <text x="214" y="235" class="g">methodology mcptrustchecker-1.0</text>
+
+  <text x="24" y="276"><tspan class="g">Findings</tspan>  <tspan class="red b">1 critical</tspan></text>
+
+  <text x="24" y="308"><tspan class="wht b">Toxic flows</tspan> <tspan class="g">(untrusted-input → sensitive-source → external-sink)</tspan></text>
+  <text x="24" y="330"><tspan class="red">  ▸ [critical]</tspan> <tspan class="t">the three trifecta roles are co-present across tools</tspan></text>
+
+  <text x="24" y="366"><tspan class="red b">[CRIT]</tspan> <tspan class="g">MTC-FLOW-002</tspan>  <tspan class="wht">Completed toxic-flow trifecta</tspan></text>
+  <text x="24" y="386" class="g">       untrusted [fetch_url] · reads [read_file] · sends [http_request]</text>
+  <text x="24" y="406"><tspan class="grn">       →</tspan> <tspan class="t">split the trifecta across separate, individually-approved tools</tspan></text>
+</svg>

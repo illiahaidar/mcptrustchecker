@@ -1,0 +1,400 @@
+/*! MCP Trust Checker · https://mcptrustchecker.com · support@mcptrustchecker.com · © 2026 Illia Haidar · MIT */
+/**
+ * Live acquisition over the wire using the official MCP SDK.
+ *
+ * SECURITY: scanning is itself an attack surface. stdio acquisition spawns a
+ * child process, so we:
+ *   - allowlist the executable by BARE NAME only (a path like `/tmp/node`
+ *     is rejected — a basename must not authorize an attacker-chosen path);
+ *   - pass a scrubbed environment: the parent env is not inherited by us, and
+ *     any caller/config-supplied env has execution-hijacking variables
+ *     (NODE_OPTIONS, LD_PRELOAD, DYLD_*, PYTHON*, …) stripped, so an allowlisted
+ *     runtime can't be redirected;  (the SDK still injects a small sudo-style
+ *     safe subset — HOME/PATH/SHELL/TERM/USER — via getDefaultEnvironment());
+ *   - capture stderr and enforce aggressive timeouts.
+ * HTTP acquisition validates the URL scheme, and — for config-derived URLs —
+ * blocks private/loopback/link-local hosts to prevent SSRF.
+ *
+ * The SDK is imported dynamically so the pure engine and its tests never need
+ * it loaded; live scanning requires `@modelcontextprotocol/sdk` at runtime.
+ */
+
+import type { PromptDef, ResourceDef, ServerSurface, ToolDef } from '../types.js';
+import { surfaceFromManifest } from './manifest.js';
+
+/** Executables permitted for stdio acquisition (the canonical safe set). */
+export const ALLOWED_COMMANDS = new Set(['npx', 'uvx', 'python', 'python3', 'node', 'docker', 'deno']);
+
+/**
+ * Environment variables that can hijack an otherwise-trusted runtime. Stripped
+ * from any caller/config-supplied env before spawning, so an allowlisted
+ * `node`/`python` can't be told to load attacker code at startup.
+ */
+const DANGEROUS_ENV_EXACT = new Set([
+  'PATH', // a config-supplied PATH would redirect an allowlisted `node`/`python` to an attacker binary
+  'NODE_PATH', // hijacks bare-import resolution for `node`
+  'NODE_OPTIONS',
+  'NODE_REPL_EXTERNAL_MODULE',
+  'PYTHONSTARTUP',
+  'PYTHONPATH',
+  'PYTHONHOME',
+  'PERL5OPT',
+  'RUBYOPT',
+  'BASH_ENV',
+  'ENV',
+  'GIT_SSH_COMMAND',
+  'GIT_EXTERNAL_DIFF',
+  // Package-index redirects — a config env could point `npx`/`uvx`/`pip` at an
+  // attacker-controlled registry (supply-chain redirect). Defense-in-depth.
+  'NPM_CONFIG_REGISTRY',
+  'PIP_INDEX_URL',
+  'PIP_EXTRA_INDEX_URL',
+  'UV_INDEX_URL',
+  'UV_DEFAULT_INDEX',
+]);
+const DANGEROUS_ENV_PREFIX = ['LD_', 'DYLD_', 'NPM_CONFIG_'];
+
+/** Drop execution-hijacking vars and bash function definitions from an env map. */
+export function sanitizeEnv(env: Record<string, string>): { clean: Record<string, string>; dropped: string[] } {
+  const clean: Record<string, string> = {};
+  const dropped: string[] = [];
+  for (const [k, v] of Object.entries(env)) {
+    const key = k.toUpperCase();
+    const bad =
+      DANGEROUS_ENV_EXACT.has(key) ||
+      DANGEROUS_ENV_PREFIX.some((p) => key.startsWith(p)) ||
+      (typeof v === 'string' && v.startsWith('()'));
+    if (bad) dropped.push(k);
+    else clean[k] = v;
+  }
+  return { clean, dropped };
+}
+
+/** True for a private/loopback/link-local IPv4 dotted-quad. */
+function isPrivateIpv4(h: string): boolean {
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return false;
+  const a = Number(m[1]);
+  const b = Number(m[2]);
+  return (
+    a === 127 || a === 10 || a === 0 ||
+    (a === 192 && b === 168) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 169 && b === 254) // link-local incl. cloud metadata 169.254.169.254
+  );
+}
+
+/**
+ * Block loopback / private / link-local hosts (SSRF guard for config-derived
+ * URLs). IPv6 checks apply only to actual IPv6 literals (so DNS names like
+ * "fc-api.com" aren't blocked), and IPv4-mapped IPv6 (::ffff:127.0.0.1) is
+ * unwrapped. NOTE: this is string-based; a public DNS name that *resolves* to a
+ * private IP (DNS rebinding) is not caught here — that is inherent to pre-connect
+ * static checks and is documented as out of scope.
+ */
+/**
+ * Extract the embedded IPv4 of an IPv4-mapped IPv6 literal. Node's URL parser
+ * normalizes `::ffff:169.254.169.254` to the HEX form `::ffff:a9fe:a9fe`, so we
+ * must accept BOTH the dotted and the hextet forms — the previous dotted-only
+ * regex was dead code against a real `URL.hostname`, leaving cloud-metadata
+ * (169.254.169.254) reachable through the SSRF guard.
+ */
+function mappedIpv4(h: string): string | undefined {
+  const dotted = h.match(/:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (dotted) return dotted[1];
+  const hex = h.match(/::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (hex) {
+    const hi = parseInt(hex[1]!, 16);
+    const lo = parseInt(hex[2]!, 16);
+    return `${(hi >> 8) & 255}.${hi & 255}.${(lo >> 8) & 255}.${lo & 255}`;
+  }
+  return undefined;
+}
+
+export function isBlockedHost(hostname: string): boolean {
+  // Strip brackets and a trailing FQDN dot (`localhost.` resolves like `localhost`).
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  if (h === 'localhost' || h.endsWith('.localhost')) return true;
+  if (isPrivateIpv4(h)) return true;
+  // IPv6 literal (contains a colon)
+  if (h.includes(':')) {
+    if (h === '::1' || h === '::') return true;
+    if (h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return true; // link-local / ULA
+    const embedded = mappedIpv4(h);
+    if (embedded && isPrivateIpv4(embedded)) return true; // IPv4-mapped IPv6 (dotted OR hextet form)
+  }
+  return false;
+}
+
+const REQUEST_OPTS = { timeout: 15_000, maxTotalTimeout: 30_000, resetTimeoutOnProgress: false };
+const CONNECT_TIMEOUT_MS = 20_000;
+const MAX_ITEMS = 1000;
+const MAX_PAGES = 50;
+
+export interface StdioSpec {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+}
+
+export interface LiveOptions {
+  /** Allow spawning a command outside the allowlist (opt-in, dangerous). */
+  allowAnyCommand?: boolean;
+  /** Restrict HTTP acquisition to these hostnames. */
+  allowedHosts?: string[];
+  /** Block private/loopback/link-local hosts (set for untrusted, config-derived URLs). */
+  blockPrivateHosts?: boolean;
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+async function loadSdk(): Promise<any> {
+  try {
+    const [{ Client }, stdio, http, sse] = await Promise.all([
+      import('@modelcontextprotocol/sdk/client/index.js'),
+      import('@modelcontextprotocol/sdk/client/stdio.js'),
+      import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
+      import('@modelcontextprotocol/sdk/client/sse.js'),
+    ]);
+    return {
+      Client,
+      StdioClientTransport: (stdio as any).StdioClientTransport,
+      StreamableHTTPClientTransport: (http as any).StreamableHTTPClientTransport,
+      SSEClientTransport: (sse as any).SSEClientTransport,
+    };
+  } catch (err) {
+    throw new Error(
+      'Live scanning requires the "@modelcontextprotocol/sdk" package. ' +
+        `Install it (npm i @modelcontextprotocol/sdk). Underlying error: ${(err as Error).message}`,
+    );
+  }
+}
+
+// Permissive result schemas so a single non-spec-compliant tool/prompt/resource
+// object does not make the SDK reject the WHOLE list (real servers are often
+// slightly non-compliant — scanning them is exactly the point). Built once from
+// the zod that ships with the SDK; falls back to the strict high-level calls.
+let looseSchemas: Record<string, unknown> | null | undefined;
+async function getLooseSchemas(): Promise<Record<string, unknown> | null> {
+  if (looseSchemas !== undefined) return looseSchemas ?? null;
+  try {
+    const zod: any = await import('zod');
+    const z = zod.z ?? zod.default ?? zod;
+    const mk = (key: string) =>
+      z.object({ [key]: z.array(z.any()).optional(), nextCursor: z.string().optional() }).passthrough();
+    looseSchemas = { tools: mk('tools'), prompts: mk('prompts'), resources: mk('resources') };
+  } catch {
+    looseSchemas = null;
+  }
+  return looseSchemas;
+}
+
+async function listLoose(
+  client: any,
+  method: string,
+  key: 'tools' | 'prompts' | 'resources',
+  cursor?: string,
+): Promise<{ items: unknown[]; nextCursor?: string }> {
+  const schemas = await getLooseSchemas();
+  const params = cursor ? { cursor } : {};
+  if (schemas && typeof client.request === 'function') {
+    const r = await client.request({ method, params }, schemas[key], REQUEST_OPTS);
+    return { items: Array.isArray(r?.[key]) ? r[key] : [], nextCursor: r?.nextCursor };
+  }
+  const fn = key === 'tools' ? 'listTools' : key === 'prompts' ? 'listPrompts' : 'listResources';
+  const r = await client[fn](params, REQUEST_OPTS);
+  return { items: Array.isArray(r?.[key]) ? r[key] : [], nextCursor: r?.nextCursor };
+}
+
+async function enumerate(client: any): Promise<{
+  tools: ToolDef[];
+  prompts: PromptDef[];
+  resources: ResourceDef[];
+  server: ServerSurface['server'];
+}> {
+  const caps = client.getServerCapabilities?.() ?? {};
+  const info = client.getServerVersion?.() ?? {};
+  const instructions = client.getInstructions?.();
+
+  const tools: ToolDef[] = [];
+  let cursor: string | undefined;
+  let pages = 0;
+  do {
+    const r = await listLoose(client, 'tools/list', 'tools', cursor);
+    for (const t of r.items) tools.push(t as ToolDef);
+    cursor = r.nextCursor;
+    // Bound BOTH item count and page count: a malicious server can return
+    // empty pages with a persistent cursor forever.
+    if (tools.length >= MAX_ITEMS || ++pages >= MAX_PAGES) break;
+  } while (cursor);
+
+  const prompts: PromptDef[] = [];
+  if (caps.prompts) {
+    try {
+      const r = await listLoose(client, 'prompts/list', 'prompts');
+      for (const p of r.items) prompts.push(p as PromptDef);
+    } catch {
+      /* optional capability */
+    }
+  }
+
+  const resources: ResourceDef[] = [];
+  if (caps.resources) {
+    try {
+      const r = await listLoose(client, 'resources/list', 'resources');
+      for (const res of r.items) resources.push(res as ResourceDef);
+    } catch {
+      /* optional capability */
+    }
+  }
+
+  return {
+    tools,
+    prompts,
+    resources,
+    server: {
+      name: info.name,
+      version: info.version,
+      title: info.title,
+      instructions,
+      capabilities: caps,
+    },
+  };
+}
+
+function commandBase(command: string): string {
+  const cleaned = command.replace(/\\/g, '/');
+  return cleaned.slice(cleaned.lastIndexOf('/') + 1);
+}
+
+/** Acquire a surface by spawning a local stdio MCP server. */
+export async function acquireStdio(spec: StdioSpec, opts: LiveOptions = {}): Promise<ServerSurface> {
+  const base = commandBase(spec.command);
+  // A path separator means the caller specified an explicit path; a basename
+  // match must NOT authorize an attacker-chosen path (e.g. /tmp/evil/node).
+  const hasPathSeparator = /[\\/]/.test(spec.command);
+  const allowed = ALLOWED_COMMANDS.has(base) && !hasPathSeparator;
+  if (!allowed && !opts.allowAnyCommand) {
+    const reason = hasPathSeparator
+      ? `path-qualified commands are not allowlisted (only bare names ${[...ALLOWED_COMMANDS].join(', ')})`
+      : `not in the executable allowlist (${[...ALLOWED_COMMANDS].join(', ')})`;
+    throw new Error(
+      `Refusing to spawn "${spec.command}": ${reason}. Re-run with --allow-any-command only if you trust it.`,
+    );
+  }
+
+  const { clean: safeEnv, dropped } = sanitizeEnv(spec.env ?? {});
+
+  const sdk = await loadSdk();
+  const transport = new sdk.StdioClientTransport({
+    command: spec.command,
+    args: spec.args ?? [],
+    // PATH last so a (scrubbed, but defense-in-depth) config env can never win.
+    env: { ...safeEnv, PATH: process.env.PATH ?? '' },
+    cwd: spec.cwd ?? process.cwd(),
+    stderr: 'pipe',
+  });
+  const client = new sdk.Client({ name: 'mcptrustchecker', version: '1.0.0' }, { capabilities: {} });
+
+  try {
+    await withTimeout(client.connect(transport), CONNECT_TIMEOUT_MS, 'stdio connect');
+    const enumd = await enumerate(client);
+    const id = `${spec.command} ${(spec.args ?? []).join(' ')}`.trim();
+    const surface = surfaceFromManifest({ ...enumd }, id, id);
+    surface.source = { kind: 'stdio', origin: id };
+    surface.transport = {
+      kind: 'stdio',
+      command: spec.command,
+      args: spec.args ?? [],
+      userControlledCommand: !allowed,
+      ...(dropped.length ? { droppedEnv: dropped } : {}),
+    };
+    return surface;
+  } finally {
+    await client.close?.().catch(() => {});
+  }
+}
+
+/** Acquire a surface from a Streamable-HTTP / SSE endpoint. */
+export async function acquireHttp(url: string, opts: LiveOptions = {}): Promise<ServerSurface> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`Invalid URL: ${url}`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`Unsupported URL scheme "${parsed.protocol}" (only http/https).`);
+  }
+  if (opts.allowedHosts && !opts.allowedHosts.includes(parsed.hostname)) {
+    throw new Error(`Host ${parsed.hostname} is not in the allowed-hosts list.`);
+  }
+  if (opts.blockPrivateHosts && isBlockedHost(parsed.hostname)) {
+    throw new Error(
+      `Refusing to connect to private/loopback host "${parsed.hostname}" from an untrusted config (SSRF guard). ` +
+        `Use --allowed-hosts to permit specific hosts.`,
+    );
+  }
+
+  const sdk = await loadSdk();
+  const client = new sdk.Client({ name: 'mcptrustchecker', version: '1.0.0' }, { capabilities: {} });
+
+  // Re-validate every redirect hop: the initial-URL SSRF check is useless if the
+  // server 302s to http://[::ffff:169.254.169.254]/. We follow redirects
+  // manually (capped) and run each hop's host back through the same guard.
+  const guardedFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    let current = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
+    for (let hop = 0; hop < 6; hop++) {
+      const res = await fetch(current, { ...init, redirect: 'manual' });
+      const loc = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+      if (!loc) return res;
+      const next = new URL(loc, current);
+      if (next.protocol !== 'http:' && next.protocol !== 'https:')
+        throw new Error(`Blocked redirect to non-http scheme "${next.protocol}".`);
+      if (opts.allowedHosts && !opts.allowedHosts.includes(next.hostname))
+        throw new Error(`Blocked redirect to disallowed host "${next.hostname}".`);
+      if (opts.blockPrivateHosts && isBlockedHost(next.hostname))
+        throw new Error(`SSRF: blocked redirect to private/loopback host "${next.hostname}".`);
+      current = next.href;
+    }
+    throw new Error('Too many redirects.');
+  };
+
+  const connect = async (): Promise<void> => {
+    try {
+      const t = new sdk.StreamableHTTPClientTransport(parsed, { fetch: guardedFetch });
+      await withTimeout(client.connect(t), CONNECT_TIMEOUT_MS, 'http connect');
+    } catch {
+      const sseT = new sdk.SSEClientTransport(parsed, { fetch: guardedFetch });
+      await withTimeout(client.connect(sseT), CONNECT_TIMEOUT_MS, 'sse connect');
+    }
+  };
+
+  try {
+    await connect();
+    const enumd = await enumerate(client);
+    const surface = surfaceFromManifest({ ...enumd }, url, url);
+    surface.source = { kind: 'http', origin: url };
+    surface.transport = { kind: 'http', url };
+    return surface;
+  } finally {
+    await client.close?.().catch(() => {});
+  }
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */

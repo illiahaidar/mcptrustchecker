@@ -1,0 +1,112 @@
+/*! MCP Trust Checker · https://mcptrustchecker.com · support@mcptrustchecker.com · © 2026 Illia Haidar · MIT */
+/**
+ * The scoring model — every constant that can move a Trust Score lives here so
+ * the methodology is auditable in one place. A plain weighted average is
+ * gameable, so we use additive penalties from 100 with diminishing returns,
+ * per-category caps, and weakest-link gates — severity is kept distinct from
+ * risk, and the result is fully deterministic.
+ */
+
+import type { Category, Confidence, Grade, Severity } from '../types.js';
+
+/** Points for the FIRST finding of a severity, before modifiers. */
+export const SEVERITY_WEIGHT: Record<Severity, number> = {
+  critical: 45,
+  high: 22,
+  medium: 9,
+  low: 3,
+  info: 0,
+};
+
+/** Confidence multiplier — a guess must not carry a confirmed finding's weight. */
+export const CONFIDENCE_MULT: Record<Confidence, number> = {
+  confirmed: 1.0,
+  strong: 0.7,
+  heuristic: 0.4,
+  speculative: 0.2,
+};
+
+/** Diminishing returns for the Nth finding of the same rule (index clamped to last). */
+export const DIMINISHING = [1.0, 0.5, 0.25, 0.1];
+
+/** Maximum points any single category may subtract. */
+export const CATEGORY_CAP: Record<Category, number> = {
+  injection: 50,
+  exfiltration: 50,
+  permissions: 35,
+  'supply-chain': 30,
+  network: 25,
+  hygiene: 10,
+};
+
+export const ALL_CATEGORIES: Category[] = [
+  'injection',
+  'exfiltration',
+  'permissions',
+  'supply-chain',
+  'network',
+  'hygiene',
+];
+
+/** Higher score = safer. Bands are fixed and published. */
+export const GRADE_BANDS: { grade: Grade; min: number }[] = [
+  { grade: 'A', min: 90 },
+  { grade: 'B', min: 80 },
+  { grade: 'C', min: 70 },
+  { grade: 'D', min: 60 },
+  { grade: 'F', min: 0 },
+];
+
+/** Strictness ordering: F is worst (0), A is best (4). */
+export const GRADE_RANK: Record<Grade, number> = { F: 0, D: 1, C: 2, B: 3, A: 4 };
+
+export function bandForScore(score: number): Grade {
+  for (const b of GRADE_BANDS) if (score >= b.min) return b.grade;
+  return 'F';
+}
+
+/** Return the stricter (worse) of two grades. */
+export function stricterGrade(a: Grade, b: Grade): Grade {
+  return GRADE_RANK[a] <= GRADE_RANK[b] ? a : b;
+}
+
+/**
+ * MCP Trust Checker scores two independent axes:
+ *
+ *  - TRUST (the A–F grade): does anything suggest the server is malicious or
+ *    negligent? Driven by *threat* findings (poisoning, secrets, unicode
+ *    smuggling, typosquat, CVEs, rug-pull, annotation lies, a single tool built
+ *    as an exfiltration primitive).
+ *  - CAPABILITY (a level): how much could this server do if the model driving
+ *    it were manipulated? Driven by *capability* findings (code execution,
+ *    filesystem writes, network egress, the cross-tool toxic-flow surface).
+ *
+ * A legitimate but powerful server (a scraper, a browser, a filesystem tool) is
+ * high-CAPABILITY but should still be high-TRUST — it isn't a bad actor, it just
+ * has a large blast radius. Keeping the axes separate is what stops the grade
+ * from collapsing every capable server into "F".
+ *
+ * These rules describe *capability* and therefore do NOT lower the trust grade;
+ * they raise the capability level and are shown as "capability observations".
+ */
+export const CAPABILITY_RULES = new Set<string>([
+  'MTC-CAP-001', // command/code execution
+  'MTC-CAP-002', // filesystem mutation
+  'MTC-CAP-004', // open-world + sensitive read
+  'MTC-CAP-005', // missing destructiveHint
+  'MTC-CAP-006', // unconstrained command param
+  'MTC-CAP-007', // unconstrained URL/host param
+  'MTC-CAP-008', // unconstrained path param
+  'MTC-CAP-009', // declared sampling capability
+  'MTC-CAP-010', // declared elicitation capability (the secret-seeking variant is MTC-CAP-011, a threat)
+  'MTC-FLOW-002', // cross-tool trifecta (capability co-presence, not malice)
+  'MTC-FLOW-003', // read + egress in one tool
+  'MTC-FLOW-004', // source + sink co-exist
+  'MTC-FLOW-005', // untrusted input reaches an action
+  'MTC-NET-005', // remote endpoint (informational)
+]);
+
+/** True if a rule describes capability/blast-radius rather than a trust threat. */
+export function isCapabilityRule(ruleId: string): boolean {
+  return CAPABILITY_RULES.has(ruleId);
+}

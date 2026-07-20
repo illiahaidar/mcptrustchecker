@@ -5,6 +5,9 @@
 
 import type { ScanReport, Severity } from '../types.js';
 import { ALL_CATEGORIES } from '../scoring/model.js';
+import { coverageLabel } from '../scoring/coverage.js';
+
+const COVERAGE_EMOJI = { live: '🟢', source: '🟢', manifest: '🟡', metadata: '🟡', empty: '🔴' } as const;
 
 const SEV_EMOJI: Record<Severity, string> = {
   critical: '🟥',
@@ -36,6 +39,16 @@ export function renderMarkdown(report: ScanReport): string {
       `**Surface:** ${report.stats.tools} tools, ${report.stats.prompts} prompts, ${report.stats.resources} resources · ` +
       `**Methodology:** \`${s.methodologyVersion}\``,
   );
+  md.push('');
+
+  const cov = report.coverage;
+  md.push(`**Coverage:** ${COVERAGE_EMOJI[cov.level] ?? '⚪'} ${cov.level.toUpperCase()} — ${coverageLabel(cov.level)}`);
+  if (cov.caveats.length) {
+    md.push('');
+    md.push('> [!NOTE]');
+    md.push('> This grade reflects only what was inspected:');
+    for (const note of cov.caveats) md.push(`> - ${mdInline(note)}`);
+  }
   md.push('');
 
   const bs = report.stats.findingsBySeverity;

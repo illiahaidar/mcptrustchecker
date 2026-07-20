@@ -4,7 +4,8 @@
  * when piped or under NO_COLOR.
  */
 
-import type { CapabilityLevel, Finding, Grade, ScanReport, Severity } from '../types.js';
+import type { CapabilityLevel, CoverageLevel, Finding, Grade, ScanReport, Severity } from '../types.js';
+import { coverageLabel } from '../scoring/coverage.js';
 import { c, padVisible } from '../util/ansi.js';
 import { ALL_CATEGORIES, isCapabilityRule } from '../scoring/model.js';
 
@@ -50,6 +51,13 @@ function capColor(level: CapabilityLevel, s: string): string {
     case 'critical':
       return c.bold(c.red(s));
   }
+}
+
+/** A deep scan (live/source) reads normal; a shallow one (manifest/metadata/empty) is a caution. */
+function coverageColor(level: CoverageLevel, s: string): string {
+  if (level === 'live' || level === 'source') return c.green(s);
+  if (level === 'empty') return c.red(s);
+  return c.yellow(s);
 }
 
 /** Usable terminal width (clamped), for wrapping detailed descriptions. */
@@ -114,6 +122,10 @@ export function renderTerminal(report: ScanReport, opts: { details?: boolean } =
   out.push(`   ${gradeColor(score.grade, `╭${'─'.repeat(badge.length)}╮`)}`);
   out.push(`   ${gradeColor(score.grade, `│${badge}│`)}   ${c.bold(`Trust Score ${score.score}/100`)}   ${c.gray('(malice/negligence signals)')}`);
   out.push(`   ${gradeColor(score.grade, `╰${'─'.repeat(badge.length)}╯`)}   ${capColor(cap.level, `Capability ${cap.level.toUpperCase()}`)}   ${c.gray('(blast radius)')}`);
+  const cov = report.coverage;
+  // Align under "Capability": 3 leading spaces + the 2 box borders + badge width + 3-space gap.
+  const pad = ' '.repeat(badge.length + 8);
+  out.push(`${pad}${coverageColor(cov.level, `Coverage ${cov.level.toUpperCase()}`)}   ${c.gray('(' + coverageLabel(cov.level) + ')')}`);
   if (cap.reasons.length) {
     out.push(`   ${c.gray('methodology ' + score.methodologyVersion)} · ${c.gray(cap.reasons.slice(0, 2).join('; '))}`);
   } else {
@@ -130,6 +142,16 @@ export function renderTerminal(report: ScanReport, opts: { details?: boolean } =
     .join(c.gray(' · '));
   out.push(`${c.gray('Threats   ')} ${counts || c.green('none')}`);
   out.push(`${c.gray('Capability')} ${capColor(cap.level, cap.level)} ${c.gray(`(${capabilityFindings.length} observation${capabilityFindings.length === 1 ? '' : 's'})`)}`);
+
+  // Coverage caveats — what the scan could NOT see, so a clean grade on a shallow
+  // scan is never read as a thorough all-clear.
+  if (cov.caveats.length) {
+    out.push('');
+    out.push(`${coverageColor(cov.level, '⚑')} ${c.gray('Coverage — this grade reflects only what was inspected:')}`);
+    for (const note of cov.caveats) {
+      for (const wl of wrap(note, TERM - 4)) out.push(`  ${c.gray(wl)}`);
+    }
+  }
 
   // Category penalties.
   const cats = ALL_CATEGORIES.filter((cat) => score.categorySubtotals[cat] > 0);

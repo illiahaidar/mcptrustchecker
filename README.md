@@ -9,10 +9,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-3c873a.svg)](package.json)
 [![Methodology](https://img.shields.io/badge/methodology-mcptrustchecker--1.0-6f42c1.svg)](docs/methodology.md)
-[![Tests](https://img.shields.io/badge/tests-294%20passing-brightgreen.svg)](test)
+[![Tests](https://img.shields.io/badge/tests-304%20passing-brightgreen.svg)](test)
 [![Rules](https://img.shields.io/badge/rules-78-orange.svg)](docs/rules.md)
 [![No account](https://img.shields.io/badge/account-not%20required-brightgreen.svg)](#why-this-is-different)
 [![Offline](https://img.shields.io/badge/runs-100%25%20offline-brightgreen.svg)](#why-this-is-different)
+[![Free hosted API](https://img.shields.io/badge/hosted%20API-free-c4f542.svg)](https://mcptrustchecker.com/api)
 
 <br/>
 
@@ -23,6 +24,8 @@
 ```bash
 npx mcptrustchecker                # 🔍 scan every MCP server you already have installed — zero config
 ```
+
+**Zero install?** Run the same deterministic engine as a **free public web API → [mcptrustchecker.com/api](https://mcptrustchecker.com/api)**
 
 <sub>· offline · deterministic · no account · OAuth browser login for protected servers · reads the real published npm/PyPI source · <a href="#the-algorithm-the-capability-flow-trust-model">one novel core</a> ·</sub>
 
@@ -148,6 +151,8 @@ mcptrustchecker scan ./tools.json --min-grade B             # exit 1 below a gra
 
 The terminal report is **detailed by default** — every finding prints its full description (**what** the problem is and **why** it matters), the exact location, the offending **evidence**, a **fix**, and its OWASP mapping, grouped most-severe-first. Add `--details` for external references, or `--quiet` for just the grade line.
 
+**No install? Use the free hosted API.** A hosted version of the exact same deterministic engine runs at **[mcptrustchecker.com/api](https://mcptrustchecker.com/api)** — POST a `tools.json` manifest or a published npm/PyPI package name over a single HTTPS request and get the same auditable A–F Trust Score back as JSON. It is **completely free** (grab a key in seconds, no card, no account), and it's the quickest way to try the scanner without installing anything. The CLI and library stay 100% offline — the hosted API is an optional convenience.
+
 ---
 
 ## The algorithm: the Capability-Flow Trust Model
@@ -242,20 +247,22 @@ Full list: **[docs/rules.md](docs/rules.md)** · run `mcptrustchecker rules`.
 
 ---
 
-## Two axes: Trust (grade) and Capability (blast radius)
+## Three axes: Trust (grade), Capability (blast radius), Coverage (depth)
 
-A single number can't answer "should I use this server?" — because **"powerful" and "malicious" are different questions.** A web scraper legitimately needs to fetch untrusted pages and act on them; that's a large *blast radius*, not evidence it's a bad actor. So MCP Trust Checker reports two independent things:
+A single number can't answer "should I use this server?" — because **"powerful" and "malicious" are different questions**, and a clean grade means nothing if the scan barely saw the server. So MCP Trust Checker reports three independent things:
 
 - **Trust — the A–F grade.** Driven by *threat* signals: prompt-injection with concealment, embedded secrets, Unicode smuggling, typosquatting, known CVEs, rug-pull drift, annotation lies, a single tool built as an exfiltration primitive. Answers **"any sign this server is malicious or negligent?"**
 - **Capability — a level (Minimal → Critical).** Driven by what the server *can do*: code execution, filesystem writes, network egress, the cross-tool toxic-flow surface. Answers **"how much damage if the model driving it is manipulated?"** — a fact to size access against, **not** a mark against the server.
+- **Coverage — a level (Live → Source → Manifest → Metadata → Empty).** How much the scan could actually inspect. A Grade A from a `metadata`-only scan (no tools enumerated, no code read) is **not** the assurance of a Grade A from a `live` scan that saw the real runtime tools. Coverage never changes the score — it states the score's reach, so a shallow scan is never mistaken for a clean bill of health. When coverage is partial, the report says exactly what it could not see.
 
 ```
-firecrawl   Trust B (81/100)   Capability CRITICAL   → trustworthy, but huge blast radius — grant carefully
-poisoned    Trust F            Capability HIGH        → actual malice signals — avoid
-memory      Trust A (100)      Capability MINIMAL     → safe and low-power
+firecrawl   Trust B (81/100)   Capability CRITICAL   Coverage LIVE     → trustworthy, but huge blast radius — grant carefully
+poisoned    Trust F            Capability HIGH        Coverage LIVE     → actual malice signals — avoid
+memory      Trust A (100)      Capability MINIMAL     Coverage LIVE     → safe and low-power
+some-pkg    Trust A (98)       Capability MINIMAL     Coverage METADATA → clean *so far* — 0 tools seen; scan the live server
 ```
 
-This is why MCP Trust Checker doesn't collapse every capable server into "F" (which would make the grade useless). Popularity is never an input — popular packages get compromised — but a legitimate powerful server keeps a high Trust grade while its Capability is surfaced honestly.
+This is why MCP Trust Checker doesn't collapse every capable server into "F" (which would make the grade useless). Popularity is never an input — popular packages get compromised — but a legitimate powerful server keeps a high Trust grade while its Capability and the scan's Coverage are surfaced honestly.
 
 ## The Trust grade is auditable by construction
 

@@ -14,6 +14,7 @@ export function makeSurface(partial: Partial<ServerSurface> & { tools?: ToolDef[
     resources: partial.resources ?? [],
     transport: partial.transport,
     packageMeta: partial.packageMeta,
+    sourceFiles: partial.sourceFiles,
   };
 }
 

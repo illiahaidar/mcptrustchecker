@@ -102,6 +102,8 @@ export function renderSarif(report: ScanReport): string {
           trustScore: report.score.score,
           grade: report.score.grade,
           capabilityLevel: report.capabilityProfile.level,
+          coverageLevel: report.coverage.level,
+          coverageCaveats: report.coverage.caveats,
           methodologyVersion: report.score.methodologyVersion,
           surfaceDigest: report.surfaceDigest,
         },

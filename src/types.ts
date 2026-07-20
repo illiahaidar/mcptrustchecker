@@ -255,6 +255,40 @@ export interface CapabilityProfile {
   tags: CapabilityTag[];
 }
 
+// ---------------------------------------------------------------------------
+// Coverage — how much of the target the scan could actually inspect
+// ---------------------------------------------------------------------------
+
+/**
+ * The depth of what the scan actually observed. A Trust grade is only ever as
+ * meaningful as its coverage: a clean grade from a metadata-only scan (no tools
+ * enumerated, no source read) is NOT the same assurance as a clean grade from a
+ * live scan that saw the real runtime tools and read the code.
+ */
+export type CoverageLevel =
+  | 'live' // spoke to a running server — the tool surface is real runtime behavior
+  | 'source' // read the implementation source (published tarball, local dir, archive)
+  | 'manifest' // a static tool list only (tools.json) — no source, not live
+  | 'metadata' // registry/provenance metadata only — no tools, no source
+  | 'empty'; // nothing scannable was found
+
+export interface Coverage {
+  level: CoverageLevel;
+  /** Which analysis inputs had signal — drives which detectors could contribute. */
+  inputs: {
+    /** Tool/prompt/resource surface enumerated (injection, capability, toxic-flow). */
+    toolSurface: boolean;
+    /** Implementation source analyzed (MTC-SRC sinks). */
+    implementationSource: boolean;
+    /** Package/provenance metadata present (supply-chain). */
+    packageMetadata: boolean;
+    /** Spoke to a running server (live stdio/HTTP), so the tools are runtime-real. */
+    liveTransport: boolean;
+  };
+  /** Honest notes on what the scan could NOT see; empty when coverage is complete. */
+  caveats: string[];
+}
+
 export interface ToxicFlow {
   id: string;
   severity: Severity;
@@ -354,6 +388,8 @@ export interface ScanReport {
   capabilities: ToolCapability[];
   /** The server's blast-radius rating (independent of the trust grade). */
   capabilityProfile: CapabilityProfile;
+  /** How much of the target the scan actually inspected (a grade's depth). */
+  coverage: Coverage;
   toxicFlows: ToxicFlow[];
   integrity?: IntegrityResult;
   /** SHA-256 of the canonicalized surface — the rug-pull fingerprint. */

@@ -22,6 +22,7 @@ import { checkIntegrity, type Lockfile } from './lockfile.js';
 import { surfaceDigest } from './util/hash.js';
 import { computeScore } from './scoring/index.js';
 import { computeCapabilityProfile } from './scoring/capability.js';
+import { computeCoverage } from './scoring/coverage.js';
 import { METHODOLOGY_VERSION, TOOL_NAME, TOOL_VERSION } from './version.js';
 
 export interface ScanOptions {
@@ -182,6 +183,7 @@ export async function scanSurface(rawSurface: ServerSurface, options: ScanOption
     score,
     capabilities,
     capabilityProfile: computeCapabilityProfile(capabilities, flows),
+    coverage: computeCoverage(surface),
     toxicFlows: flows,
     integrity,
     surfaceDigest: surfaceDigest(surface),

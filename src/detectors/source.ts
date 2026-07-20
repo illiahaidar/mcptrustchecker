@@ -26,8 +26,17 @@ export const sourceDetector: Detector = {
   stage: 4,
   title: 'Implementation-level source analysis',
   run(ctx: DetectorContext): Finding[] {
-    const files: SourceFile[] = Array.isArray(ctx.surface.sourceFiles) ? ctx.surface.sourceFiles : [];
-    if (!files.length) return [];
+    const raw: SourceFile[] = Array.isArray(ctx.surface.sourceFiles) ? ctx.surface.sourceFiles : [];
+    if (!raw.length) return [];
+    // Process in a stable path order (code-unit, never locale) so the per-rule
+    // finding cap keeps the SAME findings regardless of how the caller ordered
+    // the files — the "same input ⇒ byte-identical report" promise must not
+    // depend on filesystem or archive iteration order.
+    const files = [...raw].sort((a, b) => {
+      const x = typeof a?.path === 'string' ? a.path : '';
+      const y = typeof b?.path === 'string' ? b.path : '';
+      return x < y ? -1 : x > y ? 1 : 0;
+    });
     const findings: Finding[] = [];
     const perRule = new Map<string, number>();
 

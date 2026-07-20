@@ -1,6 +1,6 @@
 # Rule catalogue
 
-Every rule MCP Trust Checker can emit (74 total). Run `mcptrustchecker rules` for the same list, or `mcptrustchecker explain <id>` for one rule.
+Every rule MCP Trust Checker can emit (78 total). Run `mcptrustchecker rules` for the same list, or `mcptrustchecker explain <id>` for one rule.
 
 Rules marked **[capability]** describe blast-radius and raise the Capability level; they do **not** lower the Trust grade. All others are trust threats.
 
@@ -88,8 +88,12 @@ Rules marked **[capability]** describe blast-radius and raise the Capability lev
 | `MTC-SUP-011` | low | No source repository | Published artifact cannot be compared against reviewable source. |
 | `MTC-SUP-013` | low | Package not version-pinned | Installed with @latest/floating spec — the rug-pull enabler; pinning is the recommended control. |
 | `MTC-SUP-014` | medium | Dependency squat / advisory match | A declared dependency resembles a protected package or matches a known advisory by name. |
+| `MTC-SUP-015` | medium | Pinned version is not published in the registry | An exact pinned version is not listed by the registry; the scanner refuses to substitute latest and flags the gap. |
 | `MTC-NET-001` | high | Known-vulnerable version | Installed version is in a known-CVE range. |
 | `MTC-TOFU-001` | high | Surface drift since pin (rug pull) | Canonical fingerprint no longer matches the pinned value. |
+| `MTC-TOFU-002` | critical | Package republished with different content at the same version | The verified artifact hash for the pinned version changed — same version, different published bytes (byte-level rug pull). |
+| `MTC-TOFU-003` | critical | Published artifact failed integrity verification | The downloaded artifact did not match the registry-declared hash, or was redirected off the registry host — tamper evidence; the bytes were not trusted. |
+| `MTC-TOFU-004` | info | Published-source byte check did not run | An online scan could not download the artifact; results reflect registry metadata only and are not source-verified. |
 
 ## Transport & network posture
 

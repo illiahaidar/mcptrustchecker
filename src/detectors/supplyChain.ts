@@ -265,6 +265,72 @@ export function analyzeDependencies(meta: PackageMeta, config: ResolvedConfig): 
   return findings;
 }
 
+/** Turn a failed published-artifact read into an honest finding (never silent). */
+export function analyzeArtifactError(meta: PackageMeta): Finding[] {
+  if (meta.requestedVersionMissing) {
+    return [
+      {
+        ruleId: 'MTC-SUP-015',
+        title: 'Pinned version is not published in the registry',
+        category: 'supply-chain',
+        severity: 'medium',
+        confidence: 'strong',
+        description:
+          `The exact version you pinned (${meta.version ?? meta.requestedSpec ?? 'requested'}) is not listed by the ` +
+          `registry — it may have been unpublished or yanked, or a hostile registry response may be hiding it to serve ` +
+          `a different "latest". The scanner did NOT silently substitute another version: no source was read and no ` +
+          `byte pin was recorded for a version that isn't there.`,
+        remediation:
+          'Confirm the version still exists and is the one you intend to install; if it was yanked, pin a known-good ' +
+          'version and re-pin. Treat an unexpectedly-missing pinned version as a supply-chain signal.',
+        location: { kind: 'package', name: meta.name },
+        owasp: 'LLM03:2025 Supply Chain',
+        evidence: `requested ${meta.requestedSpec ?? meta.version ?? ''}`.trim(),
+      },
+    ];
+  }
+  const err = meta.artifactError;
+  if (!err) return [];
+  if (err.kind === 'integrity' || err.kind === 'untrusted-redirect') {
+    return [
+      {
+        ruleId: 'MTC-TOFU-003',
+        title: 'Published artifact failed integrity verification',
+        category: 'supply-chain',
+        severity: 'critical',
+        confidence: 'confirmed',
+        description:
+          `The published artifact for this package could not be verified against the registry's own declared hash ` +
+          `(or was served from a host outside the registry's allowlist). Its bytes were NOT trusted, scanned, or ` +
+          `pinned. This is exactly the signal a CDN/MITM tamper or a spoofed registry response would produce.\n  • ${err.detail}`,
+        remediation:
+          'Do not install this package until resolved: re-fetch from a trusted network, confirm the registry ' +
+          'metadata, and compare the artifact hash against a known-good source.',
+        location: { kind: 'package', name: meta.name },
+        owasp: 'LLM03:2025 Supply Chain',
+        evidence: err.detail,
+      },
+    ];
+  }
+  // Transient/other: not an attack claim, but the scan is NOT verified — say so.
+  return [
+    {
+      ruleId: 'MTC-TOFU-004',
+      title: 'Published-source byte check did not run',
+      category: 'supply-chain',
+      severity: 'info',
+      confidence: 'heuristic',
+      description:
+        `An online scan was requested but the published artifact could not be downloaded, so the implementation ` +
+        `source was NOT read and the byte-level integrity pin was NOT recorded. This scan reflects registry ` +
+        `metadata only — treat it as incomplete, not as a clean bill of health.\n  • ${err.detail}`,
+      remediation: 'Re-run the scan when the registry/network is reachable to complete the source-level analysis.',
+      location: { kind: 'package', name: meta.name },
+      evidence: err.detail,
+    },
+  ];
+}
+
 export const supplyChainDetector: Detector = {
   id: 'supply-chain',
   stage: 5,
@@ -277,6 +343,7 @@ export const supplyChainDetector: Detector = {
     if (meta) {
       findings.push(...analyzeProvenance(meta));
       findings.push(...analyzeDependencies(meta, ctx.config));
+      findings.push(...analyzeArtifactError(meta));
     }
     return findings;
   },

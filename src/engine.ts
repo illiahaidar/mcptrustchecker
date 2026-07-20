@@ -90,23 +90,49 @@ export async function scanSurface(rawSurface: ServerSurface, options: ScanOption
   if (options.lockfile !== undefined) {
     integrity = checkIntegrity(surface, options.lockfile);
     if (integrity.status === 'drift') {
-      raw.push({
-        ruleId: 'MTC-TOFU-001',
-        title: 'Server surface changed since it was pinned (possible rug pull)',
-        category: 'supply-chain',
-        severity: 'high',
-        confidence: 'confirmed',
-        description:
-          `The canonical fingerprint of this server no longer matches its pinned value in the lockfile. ` +
-          `Tool definitions can change silently after you approve them (a rug pull); review every change before ` +
-          `trusting it again.\n` +
-          (integrity.changes ?? []).map((c) => `  • ${c.detail}`).join('\n'),
-        remediation: 'Review the diff; re-pin only after confirming the changes are legitimate (`mcptrustchecker pin`).',
-        location: { kind: 'server' },
-        owasp: 'LLM03:2025 Supply Chain',
-        evidence: `${integrity.changes?.length ?? 0} change(s) since pin`,
-        data: { changes: integrity.changes },
-      });
+      const allChanges = integrity.changes ?? [];
+      const packageChanges = allChanges.filter((ch) => ch.kind === 'package-changed');
+      const surfaceChanges = allChanges.filter((ch) => ch.kind !== 'package-changed');
+      if (surfaceChanges.length > 0 || integrity.currentDigest !== integrity.previousDigest) {
+        raw.push({
+          ruleId: 'MTC-TOFU-001',
+          title: 'Server surface changed since it was pinned (possible rug pull)',
+          category: 'supply-chain',
+          severity: 'high',
+          confidence: 'confirmed',
+          description:
+            `The canonical fingerprint of this server no longer matches its pinned value in the lockfile. ` +
+            `Tool definitions can change silently after you approve them (a rug pull); review every change before ` +
+            `trusting it again.\n` +
+            surfaceChanges.map((c) => `  • ${c.detail}`).join('\n'),
+          remediation: 'Review the diff; re-pin only after confirming the changes are legitimate (`mcptrustchecker pin`).',
+          location: { kind: 'server' },
+          owasp: 'LLM03:2025 Supply Chain',
+          evidence: `${surfaceChanges.length} change(s) since pin`,
+          data: { changes: surfaceChanges },
+        });
+      }
+      if (packageChanges.length > 0) {
+        raw.push({
+          ruleId: 'MTC-TOFU-002',
+          title: 'Package republished with different content at the same version',
+          category: 'supply-chain',
+          severity: 'critical',
+          confidence: 'confirmed',
+          description:
+            `The registry artifact for the pinned version no longer contains the bytes that were verified at pin ` +
+            `time. The tool surface can look completely unchanged while the implementation behind it was swapped — ` +
+            `the byte-level rug pull that metadata-only checks cannot see.\n` +
+            packageChanges.map((c) => `  • ${c.detail}`).join('\n'),
+          remediation:
+            'Treat this as a potential supply-chain compromise: diff the published code against the version you ' +
+            'approved before trusting it again, and re-pin (`mcptrustchecker pin`) only after review.',
+          location: { kind: 'package', name: packageChanges[0]!.name },
+          owasp: 'LLM03:2025 Supply Chain',
+          evidence: packageChanges[0]!.detail,
+          data: { changes: packageChanges },
+        });
+      }
     }
   }
 

@@ -12,10 +12,15 @@ import type { ServerSurface, SourceFile } from '../types.js';
 import { SOURCE_EXTENSIONS } from '../data/sourcePatterns.js';
 import { surfaceFromManifest } from './manifest.js';
 
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'coverage', '.next', '__pycache__', 'venv', '.venv', 'vendor']);
-const MAX_FILES = 400;
-const MAX_FILE_BYTES = 512 * 1024; // 512 KB per file
-const MAX_TOTAL_BYTES = 12 * 1024 * 1024; // 12 MB total
+export const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'coverage', '.next', '__pycache__', 'venv', '.venv', 'vendor']);
+export const SOURCE_LIMITS = {
+  maxFiles: 400,
+  maxFileBytes: 512 * 1024, // 512 KB per file
+  maxTotalBytes: 12 * 1024 * 1024, // 12 MB total
+} as const;
+const MAX_FILES = SOURCE_LIMITS.maxFiles;
+const MAX_FILE_BYTES = SOURCE_LIMITS.maxFileBytes;
+const MAX_TOTAL_BYTES = SOURCE_LIMITS.maxTotalBytes;
 
 /** Recursively collect scannable source files from a directory (bounded). */
 export function readSourceFiles(dir: string): SourceFile[] {
@@ -53,15 +58,19 @@ export function readSourceFiles(dir: string): SourceFile[] {
     }
   };
   walk(dir);
+  // `readdirSync` returns filesystem-defined order (APFS vs ext4 differ), and the
+  // source detector caps findings per rule — so WITHOUT a stable sort the same
+  // package could yield different findings on two machines. Code-unit sort keeps
+  // the scan byte-reproducible everywhere (matches util/hash.ts's ordering rule).
+  out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return out;
 }
 
-/** Read a package.json (if present) into the surface's package metadata. */
-function readPackageMeta(dir: string): ServerSurface['packageMeta'] {
-  const pkgPath = join(dir, 'package.json');
-  if (!existsSync(pkgPath)) return undefined;
+/** Parse a package.json's text into the surface's package metadata. */
+export function packageMetaFromJson(text: string): ServerSurface['packageMeta'] {
   try {
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as Record<string, unknown>;
+    const pkg = JSON.parse(text) as Record<string, unknown>;
+    if (!pkg || typeof pkg !== 'object' || Array.isArray(pkg)) return undefined;
     return {
       registry: 'npm',
       name: typeof pkg.name === 'string' ? pkg.name : undefined,
@@ -79,14 +88,28 @@ function readPackageMeta(dir: string): ServerSurface['packageMeta'] {
   }
 }
 
+/** Read a package.json (if present) into the surface's package metadata. */
+function readPackageMeta(dir: string): ServerSurface['packageMeta'] {
+  const pkgPath = join(dir, 'package.json');
+  if (!existsSync(pkgPath)) return undefined;
+  try {
+    return packageMetaFromJson(readFileSync(pkgPath, 'utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Build a scan surface from a local package directory: its implementation source
  * (for MTC-SRC-* analysis), its package metadata (for supply-chain checks), and
  * a tools manifest if the directory ships one (tools.json / mcp-tools.json).
  */
+/** Sidecar manifest file names a package may ship, in priority order. */
+export const SIDECAR_MANIFESTS = ['tools.json', 'mcp-tools.json', 'mcp.json'] as const;
+
 export function surfaceFromPackageDir(dir: string): ServerSurface {
   let manifest: unknown = {};
-  for (const name of ['tools.json', 'mcp-tools.json', 'mcp.json']) {
+  for (const name of SIDECAR_MANIFESTS) {
     const p = join(dir, name);
     if (existsSync(p)) {
       try {

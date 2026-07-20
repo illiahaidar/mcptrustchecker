@@ -83,6 +83,7 @@ export const RULE_CATALOG: RuleDoc[] = [
   { id: 'MTC-SUP-012', title: 'No license', category: 'hygiene', severity: 'low', summary: 'Package declares no license.' },
   { id: 'MTC-SUP-013', title: 'Package not version-pinned', category: 'supply-chain', severity: 'low', summary: 'Installed with @latest/floating spec — the rug-pull enabler; pinning is the recommended control.' },
   { id: 'MTC-SUP-014', title: 'Dependency squat / advisory match', category: 'supply-chain', severity: 'medium', summary: 'A declared dependency resembles a protected package or matches a known advisory by name.' },
+  { id: 'MTC-SUP-015', title: 'Pinned version is not published in the registry', category: 'supply-chain', severity: 'medium', summary: 'An exact pinned version is not listed by the registry; the scanner refuses to substitute latest and flags the gap.' },
 
   // Stage 6 — Posture / CVE
   { id: 'MTC-NET-001', title: 'Known-vulnerable version', category: 'supply-chain', severity: 'high', summary: 'Installed version is in a known-CVE range.' },
@@ -94,6 +95,9 @@ export const RULE_CATALOG: RuleDoc[] = [
 
   // Stage 7 — Integrity
   { id: 'MTC-TOFU-001', title: 'Surface drift since pin (rug pull)', category: 'supply-chain', severity: 'high', summary: 'Canonical fingerprint no longer matches the pinned value.' },
+  { id: 'MTC-TOFU-002', title: 'Package republished with different content at the same version', category: 'supply-chain', severity: 'critical', summary: 'The verified artifact hash for the pinned version changed — same version, different published bytes (byte-level rug pull).' },
+  { id: 'MTC-TOFU-003', title: 'Published artifact failed integrity verification', category: 'supply-chain', severity: 'critical', summary: 'The downloaded artifact did not match the registry-declared hash, or was redirected off the registry host — tamper evidence; the bytes were not trusted.' },
+  { id: 'MTC-TOFU-004', title: 'Published-source byte check did not run', category: 'supply-chain', severity: 'info', summary: 'An online scan could not download the artifact; results reflect registry metadata only and are not source-verified.' },
 
   // Meta
   { id: 'MTC-META-001', title: 'Empty surface — nothing to analyze', category: 'hygiene', severity: 'info', summary: 'No tools/prompts/resources found; an empty surface is not a clean bill of health.' },

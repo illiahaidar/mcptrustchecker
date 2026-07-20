@@ -14,8 +14,11 @@ src/
   acquire/              turn a target into a normalized surface
     manifest.ts           static tools.json
     live.ts               sandboxed stdio / HTTP via the MCP SDK
+    oauth.ts              OAuth 2.0 browser sign-in for protected endpoints (--login)
     clientConfig.ts       claude_desktop_config.json etc.
-    npm.ts                best-effort package metadata (--online)
+    npm.ts                package metadata + artifact URL/hash (--online)
+    archive.ts            bounded in-memory tar/gzip/zip readers (no deps, no exec)
+    packageSource.ts      fetch + verify + read the published npm/PyPI source
     index.ts              resolveTargets(): pick the safest acquisition path
   detectors/            one file per stage; each emits Finding[]
     unicode.ts injection.ts capability.ts toxicFlow.ts supplyChain.ts posture.ts

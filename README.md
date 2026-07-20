@@ -9,8 +9,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-3c873a.svg)](package.json)
 [![Methodology](https://img.shields.io/badge/methodology-mcptrustchecker--1.0-6f42c1.svg)](docs/methodology.md)
-[![Tests](https://img.shields.io/badge/tests-211%20passing-brightgreen.svg)](test)
-[![Rules](https://img.shields.io/badge/rules-74-orange.svg)](docs/rules.md)
+[![Tests](https://img.shields.io/badge/tests-294%20passing-brightgreen.svg)](test)
+[![Rules](https://img.shields.io/badge/rules-78-orange.svg)](docs/rules.md)
 [![No account](https://img.shields.io/badge/account-not%20required-brightgreen.svg)](#why-this-is-different)
 [![Offline](https://img.shields.io/badge/runs-100%25%20offline-brightgreen.svg)](#why-this-is-different)
 
@@ -24,7 +24,7 @@
 npx mcptrustchecker                # 🔍 scan every MCP server you already have installed — zero config
 ```
 
-<sub>· offline · deterministic · no account · OAuth browser login for protected servers · <a href="#the-algorithm-the-capability-flow-trust-model">one novel core</a> ·</sub>
+<sub>· offline · deterministic · no account · OAuth browser login for protected servers · reads the real published npm/PyPI source · <a href="#the-algorithm-the-capability-flow-trust-model">one novel core</a> ·</sub>
 
 </div>
 
@@ -74,7 +74,9 @@ MCP Trust Checker's wedge is **accuracy + explainability + privacy**, with one g
 - 🔐 **Scans protected remote servers** — `--login` runs the full **OAuth 2.0 browser sign-in** (discovery → dynamic client registration → PKCE → token), so it can audit auth-gated remote MCP endpoints, not just public ones — something most scanners can't do. (Or pass a static `--header "Authorization: Bearer …"`.) Tokens stay in memory for the scan only.
 - 🎯 **Deterministic** — same input ⇒ byte-identical score, on every run and every machine.
 - 🕸️ **Cross-tool toxic-flow graph** — proves the lethal trifecta statically, composed across tools, not just within one.
-- 🔬 **Reads the code, not just the claim** — when the server's source is available (`scan ./path`), it grades what the implementation *does* (eval / shell-spawn / hardcoded egress / credential reads / obfuscated payloads), so a poisoned server can't hide behind honest-looking tool descriptions. Metadata **and** implementation, in one deterministic pass.
+- 🔬 **Reads the code, not just the claim** — it grades what the implementation *does* (eval / shell-spawn / hardcoded egress / credential reads / obfuscated payloads), so a poisoned server can't hide behind honest-looking tool descriptions. Metadata **and** implementation, in one deterministic pass.
+- 📥 **Deep-scans the actual published package** — `scan <name> --online` fetches the npm/PyPI artifact, verifies it against the registry-declared hash, and runs the full source-analysis engine on the exact bytes `npx`/`pip` would install — **in memory, without installing or executing anything**. Also scans packed release artifacts directly: `scan ./server.tgz`, `.whl`, `.zip`.
+- 🧬 **Byte-level rug-pull detection** — the verified artifact's SHA-256 is pinned in the lockfile; if the *same version* is ever republished with different bytes, the rescan raises a `critical`, `confirmed` finding (`MTC-TOFU-002`) — the attack an unchanged tool surface hides from every metadata-only check.
 - 🔎 **Decodes, not strips** — hidden Unicode payloads (Tags block / variation-selector) are recovered and shown as evidence.
 - 📌 **Rug-pull integrity** — the full tool surface is hashed and pinned; any post-approval drift trips a `confirmed` finding with a per-tool diff.
 - 🧾 **Auditable Trust Score** — every point is a published, reproducible penalty vector.
@@ -128,7 +130,9 @@ mcptrustchecker scan --command "npx -y @some/mcp-server"   # a local stdio serve
 mcptrustchecker scan https://mcp.example.com/mcp           # a live HTTP/SSE endpoint
 mcptrustchecker scan https://mcp.example.com/mcp --login   # an OAuth-protected endpoint (browser sign-in)
 mcptrustchecker scan https://mcp.example.com/mcp --header "Authorization: Bearer <token>"   # static auth
-mcptrustchecker scan @modelcontextprotocol/server-filesystem --online   # a package name (typosquat/CVE)
+mcptrustchecker scan @modelcontextprotocol/server-filesystem --online   # fetches + verifies + reads the PUBLISHED source
+mcptrustchecker scan mcp-server-fetch --online --registry pypi          # same for PyPI (sdist/wheel)
+mcptrustchecker scan ./server-1.2.0.tgz                    # a packed release artifact (.tgz/.whl/.zip) — offline
 ```
 
 **Outputs & CI gates:**
@@ -364,7 +368,7 @@ Connecting to an MCP config can run arbitrary commands. MCP Trust Checker's acqu
 
 - **[docs/methodology.md](docs/methodology.md)** — every pipeline stage in depth
 - **[docs/scoring.md](docs/scoring.md)** — the scoring model & reproducibility contract
-- **[docs/rules.md](docs/rules.md)** — the complete 74-rule catalogue
+- **[docs/rules.md](docs/rules.md)** — the complete 78-rule catalogue
 - **[docs/architecture.md](docs/architecture.md)** — code layout & how to extend
 - **[docs/ci-integration.md](docs/ci-integration.md)** — Action, SARIF, baselines
 - **[SECURITY.md](SECURITY.md)** · **[CONTRIBUTING.md](CONTRIBUTING.md)**

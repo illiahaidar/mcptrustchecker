@@ -60,7 +60,8 @@ ${c.bold('Targets')}
   --scope <scope>                  OAuth scope to request with --login (e.g. mcp:tools)
   --header "Authorization: Bearer …"   static auth header instead of --login (repeatable)
   claude_desktop_config.json       a client config (scans each server)
-  @scope/package                   supply-chain / typosquat check (add --online for metadata)
+  @scope/package                   package scan (--online fetches metadata + reads the published source)
+  path/to/server.tgz|.whl|.zip     a packed release artifact — reads the shipped source (offline)
   --command "npx -y my-server"     spawn a local stdio server (sandboxed)
   --env KEY=VALUE                  env var for --command (repeatable)
 
@@ -81,7 +82,8 @@ ${c.bold('Options')}
   --no-lock                        skip the integrity (rug-pull) check
   --pin                            re-pin the lockfile after scanning
   --include-builtins               assume client built-in tools in toxic-flow analysis
-  --online                         allow network lookups for package metadata
+  --online                         allow network lookups: registry metadata + the verified published source
+  --metadata-only                  with --online: skip downloading the package artifact
   --run                            allow spawning servers found in a client config
   --allow-any-command              permit stdio commands outside the allowlist (dangerous)
   --allowed-hosts <a,b>            restrict live HTTP acquisition to these hosts
@@ -121,6 +123,7 @@ async function main(): Promise<number | void> {
         scope: { type: 'string' },
         url: { type: 'string' },
         online: { type: 'boolean' },
+        'metadata-only': { type: 'boolean' },
         run: { type: 'boolean' },
         'allow-any-command': { type: 'boolean' },
         'allowed-hosts': { type: 'string' },
@@ -197,6 +200,7 @@ async function main(): Promise<number | void> {
     args: buildArgs(values.command, values.args),
     url: values.url,
     online: values.online,
+    metadataOnly: values['metadata-only'],
     run: values.run,
     envVars: parseEnvFlags(values.env),
     allowAnyCommand: values['allow-any-command'],

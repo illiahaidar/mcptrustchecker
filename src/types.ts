@@ -121,6 +121,25 @@ export interface PackageMeta {
   pinned?: boolean;
   /** The raw version token from the install spec, if any (e.g. "latest", "^1.2.0"). */
   requestedSpec?: string;
+  /**
+   * True when an EXACT pinned version was requested but the registry does not
+   * list it (unpublished, yanked, or hidden by a hostile registry response). The
+   * artifact is deliberately left unresolved rather than silently substituting
+   * `latest`, and a finding is raised.
+   */
+  requestedVersionMissing?: boolean;
+  /** URL of the published artifact (npm dist.tarball / PyPI sdist or wheel). */
+  tarballUrl?: string | null;
+  /** Registry-declared artifact hash: SRI (`sha512-<b64>`) or `<algo>:<hex>`. */
+  tarballIntegrity?: string | null;
+  /** SHA-256 (hex) of the verified artifact the scan actually read — the byte-level pin. */
+  tarballSha256?: string;
+  /**
+   * Set when an `--online` artifact read was attempted but did not complete.
+   * `integrity`/`untrusted-redirect` are tamper evidence (a detector raises a
+   * finding); `network`/`other` mean the byte check simply could not run.
+   */
+  artifactError?: { kind: 'integrity' | 'untrusted-redirect' | 'network' | 'other'; detail: string };
 }
 
 /** The single normalized object every detector operates on. */
@@ -300,7 +319,7 @@ export interface Score {
 export type IntegrityStatus = 'first-seen' | 'unchanged' | 'drift';
 
 export interface SurfaceChange {
-  kind: 'tool-added' | 'tool-removed' | 'tool-changed' | 'instructions-changed';
+  kind: 'tool-added' | 'tool-removed' | 'tool-changed' | 'instructions-changed' | 'package-changed';
   name?: string;
   detail: string;
 }

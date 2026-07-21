@@ -14,6 +14,7 @@
 [![No account](https://img.shields.io/badge/account-not%20required-brightgreen.svg)](#why-this-is-different)
 [![Offline](https://img.shields.io/badge/runs-100%25%20offline-brightgreen.svg)](#why-this-is-different)
 [![Free hosted API](https://img.shields.io/badge/hosted%20API-free-c4f542.svg)](https://mcptrustchecker.com/api)
+[![Trust Registry](https://img.shields.io/badge/trust%20registry-browse-8b87f7.svg)](https://mcptrustchecker.com/registry)
 
 <br/>
 
@@ -47,7 +48,7 @@ Three more things sit under that graph:
 
 > And it is **comprehensive by design**: the full catalog of known MCP attack techniques is covered in one offline pass — no API key, no LLM. [See the full coverage map ↓](#coverage-the-full-catalog-of-mcp-attack-techniques)
 
-**Jump to:** [Why it's different](#why-this-is-different) · [Quick start](#quick-start) · [The algorithm](#the-algorithm-the-capability-flow-trust-model) · [Coverage](#coverage-the-full-catalog-of-mcp-attack-techniques) · [Scoring](#the-trust-score-is-auditable-by-construction) · [Embed as a library](#embed-the-exact-same-engine-marketplaces--platforms) · [CI / GitHub](#ci--github-integration) · [Rules](docs/rules.md)
+**Jump to:** [Why it's different](#why-this-is-different) · [Quick start](#quick-start) · [The algorithm](#the-algorithm-the-capability-flow-trust-model) · [Coverage](#coverage-the-full-catalog-of-mcp-attack-techniques) · [Scoring](#the-trust-grade-is-auditable-by-construction) · [Embed as a library](#embed-the-exact-same-engine-marketplaces--platforms) · [CI / GitHub](#ci--github-integration) · [Rules](docs/rules.md)
 
 ---
 
@@ -152,6 +153,8 @@ mcptrustchecker scan ./tools.json --min-grade B             # exit 1 below a gra
 The terminal report is **detailed by default** — every finding prints its full description (**what** the problem is and **why** it matters), the exact location, the offending **evidence**, a **fix**, and its OWASP mapping, grouped most-severe-first. Add `--details` for external references, or `--quiet` for just the grade line.
 
 **No install? Use the free hosted API.** A hosted version of the exact same deterministic engine runs at **[mcptrustchecker.com/api](https://mcptrustchecker.com/api)** — POST a `tools.json` manifest or a published npm/PyPI package name over a single HTTPS request and get the same auditable A–F Trust Score back as JSON. It is **completely free** (grab a key in seconds, no card, no account), and it's the quickest way to try the scanner without installing anything. The CLI and library stay 100% offline — the hosted API is an optional convenience.
+
+**Browse the MCP Trust Registry** — a growing, security-scanned catalog of MCP servers with an A–F Trust Score for each, all computed by this exact engine: **[mcptrustchecker.com/registry](https://mcptrustchecker.com/registry)**.
 
 ---
 

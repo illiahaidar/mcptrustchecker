@@ -104,6 +104,18 @@ export const CAPABILITY_RULES = new Set<string>([
   'MTC-FLOW-004', // source + sink co-exist
   'MTC-FLOW-005', // untrusted input reaches an action
   'MTC-NET-005', // remote endpoint (informational)
+  // Implementation-level sinks found by the source scan. Their PRESENCE is what
+  // the server is built to do — a browser driver spawns processes, an API
+  // wrapper hardcodes its provider's endpoint, a cloud connector reads its CLI's
+  // credential store. That is blast radius, not evidence of malice, so these
+  // raise the capability level instead of lowering the grade. The threat-side
+  // source rules stay scored: MTC-SRC-004 (obfuscated payloads), MTC-SRC-007
+  // (unsafe deserialization) and MTC-SRC-008 (hardcoded live secrets).
+  'MTC-SRC-001', // dynamic code execution present in implementation
+  'MTC-SRC-002', // shell/process execution present in implementation
+  'MTC-SRC-003', // hardcoded egress endpoint in implementation
+  'MTC-SRC-005', // dynamic module load from a non-literal
+  'MTC-SRC-006', // credential-path read / environment dump in implementation
 ]);
 
 /** True if a rule describes capability/blast-radius rather than a trust threat. */

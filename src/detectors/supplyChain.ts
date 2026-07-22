@@ -159,21 +159,26 @@ export function analyzeProvenance(meta: PackageMeta): Finding[] {
     });
   }
 
-  if (meta.pinned === false) {
+  // Only meaningful when the CALLER explicitly asked for a floating spec
+  // (`foo@latest`, `^1`, `*`). A bare "scan <name>" has no requested spec — it is
+  // unpinned by construction, so reporting it would fire on essentially every
+  // package and tell the reader nothing about THIS one. Suppressed in that case.
+  if (meta.pinned === false && meta.requestedSpec) {
     findings.push({
       ruleId: 'MTC-SUP-013',
-      title: `Package is not version-pinned (${meta.requestedSpec ?? 'no version'})`,
+      title: `Package is not version-pinned (${meta.requestedSpec})`,
       category: 'supply-chain',
-      severity: lifecycle.length > 0 ? 'medium' : 'low',
+      // Advice-only (info) — unless install scripts make silent drift dangerous.
+      severity: lifecycle.length > 0 ? 'medium' : 'info',
       confidence: 'strong',
       description:
-        `"${name}" is installed with a floating/latest spec (${meta.requestedSpec ?? 'no version'}), so its tool ` +
+        `"${name}" is installed with a floating/latest spec (${meta.requestedSpec}), so its tool ` +
         `definitions and code can change silently after you approve it — the rug-pull enabler. Pinning is the ` +
         `recommended static control.`,
       remediation: 'Pin an exact version (and commit mcptrustchecker.lock so drift is caught on rescan).',
       location: { kind: 'package', name },
       owasp: 'LLM03:2025 Supply Chain',
-      data: { requestedSpec: meta.requestedSpec ?? null },
+      data: { requestedSpec: meta.requestedSpec },
     });
   }
 
@@ -194,9 +199,12 @@ export function analyzeProvenance(meta: PackageMeta): Finding[] {
       ruleId: 'MTC-SUP-012',
       title: 'Package has no license',
       category: 'hygiene',
-      severity: 'low',
+      // A missing license is a legal/packaging matter, not a security defect:
+      // it says nothing about whether the server is safe to run. Recorded for
+      // completeness, never scored — a security grade must not be moved by it.
+      severity: 'info',
       confidence: 'strong',
-      description: `"${name}" has no declared license.`,
+      description: `"${name}" has no declared license. This is a legal/reuse concern, not a security finding.`,
       location: { kind: 'package', name },
     });
   }

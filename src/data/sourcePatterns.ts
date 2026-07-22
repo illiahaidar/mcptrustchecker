@@ -26,6 +26,28 @@ export interface SourcePattern {
 /** File extensions we treat as scannable server source. */
 export const SOURCE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.mts', '.cts', '.jsx', '.tsx', '.py']);
 
+/**
+ * Paths that ship inside a package but are NOT the running server: test suites,
+ * benchmarks, examples, and the maintainer's own build/release tooling.
+ *
+ * This distinction matters for the *threat* rules. "Untrusted input reaches a
+ * shell" is a claim about the server's runtime; a release script that runs
+ * `npm publish ${tag}` on the maintainer's laptop has no tool input and no MCP
+ * client — flagging it says nothing about the server a user would install.
+ * (Capability rules still apply everywhere: the code is genuinely present.)
+ *
+ * Install-time hooks are NOT excused by this: a malicious `postinstall` is
+ * caught by MTC-SUP-010 regardless of which directory the script lives in.
+ */
+const NON_RUNTIME_DIR = /(^|\/)(?:tests?|__tests__|spec|specs|benchmarks?|bench|examples?|samples?|fixtures?|__mocks__|mocks?|e2e|docs?|website|scripts|tools|\.github)(\/|$)/i;
+const NON_RUNTIME_FILE = /(^|\/)[^/]*(?:\.test|\.spec|\.bench|_test|_spec)\.[a-z]+$/i;
+
+/** True when a path is packaging/dev tooling rather than the server itself. */
+export function isNonRuntimePath(path: string): boolean {
+  const p = String(path ?? '');
+  return NON_RUNTIME_DIR.test(p) || NON_RUNTIME_FILE.test(p);
+}
+
 export const SOURCE_PATTERNS: SourcePattern[] = [
   // ── Arbitrary code execution ────────────────────────────────────────────────
   {
@@ -43,7 +65,11 @@ export const SOURCE_PATTERNS: SourcePattern[] = [
     id: 'MTC-SRC-002',
     title: 'Shell/command execution in server code',
     lang: 'any',
-    pattern: /child_process|\bexecSync\s*\(|\bexec\s*\(|\bspawn(?:Sync)?\s*\(|\bos\.system\s*\(|\bos\.popen\s*\(|subprocess\.(?:run|call|Popen|check_output)\s*\(|\bshell\s*[:=]\s*True/,
+    // Bare `exec(` / `spawn(` must not be preceded by a dot: `regex.exec(str)`
+    // (RegExp.prototype.exec) and `pool.spawn(` are everyday, harmless calls.
+    // Real process spawning is still caught: the `child_process` module token
+    // matches the import, and Python's builtins are dot-free by nature.
+    pattern: /child_process|\bexecSync\s*\(|(?<!\.)\bexec\s*\(|(?<!\.)\bspawn(?:Sync)?\s*\(|\bos\.system\s*\(|\bos\.popen\s*\(|subprocess\.(?:run|call|Popen|check_output)\s*\(|\bshell\s*[:=]\s*True/,
     severity: 'high',
     confidence: 'strong',
     category: 'permissions',
@@ -94,13 +120,54 @@ export const SOURCE_PATTERNS: SourcePattern[] = [
     category: 'exfiltration',
     why: 'Reading private keys / cloud credentials, or serializing the whole environment, is a sensitive-data source that becomes exfiltration when combined with any egress.',
   },
+  // ── Input FLOW into a sink (threat, not mere capability) ────────────────────
+  // The capability rules above fire on the mere PRESENCE of a sink. These two
+  // fire only when the code visibly builds the sink's argument from a
+  // non-literal — concatenation or template interpolation into a command, or
+  // eval of a variable. That is the classic injection signature, and it is what
+  // separates a legitimate `exec('git status')` from `exec('curl '+userInput)`.
+  {
+    id: 'MTC-SRC-009',
+    title: 'Untrusted input concatenated into a command sink',
+    lang: 'any',
+    // exec/spawn/system/popen whose argument is a template with ${…}, or a
+    // string literal followed by `+`, or an identifier followed by `+ "…"`.
+    // A single validated variable arg (`exec(cmd)`) is NOT matched — only a
+    // visibly-assembled command is. `regex.exec(str)` never matches (no concat).
+    pattern: /(?:exec|execSync|spawn|spawnSync|system|popen|check_output)\s*\(\s*(?:`[^`]*\$\{|['"][^'"]*['"]\s*\+|[A-Za-z_$][\w$.[\]]*\s*\+\s*['"`])/,
+    // Medium, not high: static analysis can see that the command is ASSEMBLED,
+    // but not whether the assembled part is attacker-reachable. Most MCP servers
+    // are CLI wrappers, and interpolating their own constants (`${ADB} devices`,
+    // `xcrun simctl boot ${udid}`) is how they work at all. This is a genuine
+    // injection *precondition* worth surfacing — not proof of a flow, and not
+    // grounds on its own for a failing grade.
+    severity: 'medium',
+    confidence: 'strong',
+    category: 'injection',
+    why: 'A shell/process command assembled from concatenated or interpolated values is command injection when any part is attacker-influenced — the OWASP canonical RCE flow. Verify what reaches the interpolated value.',
+  },
+  {
+    id: 'MTC-SRC-010',
+    title: 'Dynamic evaluation of a non-literal value',
+    lang: 'any',
+    // eval(/Function( applied to something that is NOT a plain string literal —
+    // i.e. a variable or expression. eval("2+2") is not matched; eval(x) is.
+    pattern: /\b(?:eval|new\s+Function)\s*\(\s*(?!['"`)\s])/,
+    severity: 'high',
+    confidence: 'strong',
+    category: 'injection',
+    why: 'Evaluating a runtime value as code (rather than a fixed literal) executes whatever reaches it — a direct RCE primitive, and almost never necessary in legitimate code.',
+  },
   // ── Unsafe deserialization ──────────────────────────────────────────────────
   {
     id: 'MTC-SRC-007',
     title: 'Unsafe deserialization',
     lang: 'any',
     pattern: /\bpickle\.loads?\s*\(|yaml\.load\s*\((?![^)]*Loader\s*=\s*yaml\.SafeLoader)|node-serialize|\bunserialize\s*\(|marshal\.loads?\s*\(/,
-    severity: 'high',
+    // Medium, not high: presence alone cannot tell whether the data being
+    // deserialized is attacker-reachable. Choosing the unsafe API where a safe
+    // one exists is a negligence signal worth surfacing — not an F-driver.
+    severity: 'medium',
     confidence: 'strong',
     category: 'permissions',
     why: 'Deserializing untrusted data with these APIs can execute arbitrary code (a well-known RCE gadget class).',

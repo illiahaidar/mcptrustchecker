@@ -54,9 +54,12 @@ Rules marked **[capability]** describe blast-radius and raise the Capability lev
 | `MTC-FLOW-003` | high | Read-and-egress in one tool | A single tool both reads sensitive data and can send it out. **[capability]** |
 | `MTC-FLOW-004` | high | Source + sink co-exist | A sensitive-data source and an external sink are exposed together. **[capability]** |
 | `MTC-FLOW-005` | medium | Untrusted input drives an action | Untrusted input can reach an external-action sink (no sensitive source found). **[capability]** |
-| `MTC-SRC-003` | medium | Hardcoded egress to an external endpoint | A fixed outbound http(s) call to a non-local host in the code — an exfiltration/telemetry channel. |
-| `MTC-SRC-006` | high | Credential-path read or environment dump in code | Reads ~/.ssh / .aws/credentials / .netrc, or serializes the whole environment — a sensitive-data source. |
+| `MTC-SRC-003` | medium | Hardcoded egress to an external endpoint | A fixed outbound http(s) call to a non-local host in the code — an exfiltration/telemetry channel. **[capability]** |
+| `MTC-SRC-006` | high | Credential-path read or environment dump in code | Reads ~/.ssh / .aws/credentials / .netrc, or serializes the whole environment — a sensitive-data source. **[capability]** |
 | `MTC-SRC-008` | high | Hardcoded credential value in server code | A live-looking secret (AWS/GitHub/Slack/JWT/PEM…) embedded in the source, shipped to every install. |
+| `MTC-SRC-009` | medium | Untrusted input concatenated into a command sink | A shell/process command assembled by concatenation or interpolation — the command-injection flow, not mere presence of a sink. |
+| `MTC-SRC-010` | high | Dynamic evaluation of a non-literal value | eval / new Function applied to a variable or expression rather than a fixed literal — a direct RCE primitive. |
+| `MTC-SRC-011` | high | Assembled command execution and dynamic evaluation in the same server | Runtime code both builds shell commands from values and evaluates values as code — two execution primitives in one server. |
 
 ## Capability & permissions
 
@@ -69,10 +72,10 @@ Rules marked **[capability]** describe blast-radius and raise the Capability lev
 | `MTC-CAP-008` | low | Unconstrained path parameter | A file tool takes an unconstrained path — the path-traversal precondition. **[capability]** |
 | `MTC-CAP-009` | medium | Declared sampling capability | Server can drive the client LLM with its own prompts (reverse-trust / resource drain). **[capability]** |
 | `MTC-CAP-010` | medium | Declared elicitation capability | Server can pop mid-session input requests (capability; blast-radius only). **[capability]** |
-| `MTC-SRC-001` | high | Dynamic code execution in server code | eval / new Function / vm / exec(compile) — arbitrary-code-execution primitive in the implementation. |
-| `MTC-SRC-002` | high | Shell/command execution in server code | child_process / os.system / subprocess(shell=True) — command-execution sink; RCE with unsanitized input. |
-| `MTC-SRC-005` | medium | Dynamic module load from a non-literal | require()/import()/__import__ from a variable — loads runtime-chosen (attacker-influenced) code. |
-| `MTC-SRC-007` | high | Unsafe deserialization | pickle.loads / yaml.load / node-serialize / marshal.loads — a classic deserialization RCE gadget. |
+| `MTC-SRC-001` | high | Dynamic code execution in server code | eval / new Function / vm / exec(compile) — arbitrary-code-execution primitive in the implementation. **[capability]** |
+| `MTC-SRC-002` | high | Shell/command execution in server code | child_process / os.system / subprocess(shell=True) — command-execution sink; RCE with unsanitized input. **[capability]** |
+| `MTC-SRC-005` | medium | Dynamic module load from a non-literal | require()/import()/__import__ from a variable — loads runtime-chosen (attacker-influenced) code. **[capability]** |
+| `MTC-SRC-007` | medium | Unsafe deserialization | pickle.loads / yaml.load / node-serialize / marshal.loads — a classic deserialization RCE gadget. |
 
 ## Supply chain
 
@@ -86,7 +89,7 @@ Rules marked **[capability]** describe blast-radius and raise the Capability lev
 | `MTC-SUP-006` | medium | Combosquat | Protected name plus a decorative suffix (-js, -server, …). |
 | `MTC-SUP-010` | high | Install-time scripts | Package runs pre/post/install scripts — the dominant malware vector. |
 | `MTC-SUP-011` | low | No source repository | Published artifact cannot be compared against reviewable source. |
-| `MTC-SUP-013` | low | Package not version-pinned | Installed with @latest/floating spec — the rug-pull enabler; pinning is the recommended control. |
+| `MTC-SUP-013` | info | Package not version-pinned | Installed with @latest/floating spec — the rug-pull enabler; pinning is the recommended control. Advice-only (any scan-by-name is unpinned); escalates to medium only when install scripts make silent drift dangerous. |
 | `MTC-SUP-014` | medium | Dependency squat / advisory match | A declared dependency resembles a protected package or matches a known advisory by name. |
 | `MTC-SUP-015` | medium | Pinned version is not published in the registry | An exact pinned version is not listed by the registry; the scanner refuses to substitute latest and flags the gap. |
 | `MTC-NET-001` | high | Known-vulnerable version | Installed version is in a known-CVE range. |
@@ -111,5 +114,5 @@ Rules marked **[capability]** describe blast-radius and raise the Capability lev
 | Rule | Severity | Title | What it means |
 | --- | --- | --- | --- |
 | `MTC-CAP-005` | low | Mutating tool without destructiveHint | A tool that mutates/egresses declares no destructiveHint, so some clients may not prompt. **[capability]** |
-| `MTC-SUP-012` | low | No license | Package declares no license. |
+| `MTC-SUP-012` | info | No license | Package declares no license — a legal/reuse concern, not a security defect. Recorded, never scored. |
 | `MTC-META-001` | info | Empty surface — nothing to analyze | No tools/prompts/resources found; an empty surface is not a clean bill of health. |

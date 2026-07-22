@@ -80,7 +80,7 @@ export const RULE_CATALOG: RuleDoc[] = [
   { id: 'MTC-SUP-006', title: 'Combosquat', category: 'supply-chain', severity: 'medium', summary: 'Protected name plus a decorative suffix (-js, -server, …).' },
   { id: 'MTC-SUP-010', title: 'Install-time scripts', category: 'supply-chain', severity: 'high', summary: 'Package runs pre/post/install scripts — the dominant malware vector.' },
   { id: 'MTC-SUP-011', title: 'No source repository', category: 'supply-chain', severity: 'low', summary: 'Published artifact cannot be compared against reviewable source.' },
-  { id: 'MTC-SUP-012', title: 'No license', category: 'hygiene', severity: 'low', summary: 'Package declares no license.' },
+  { id: 'MTC-SUP-012', title: 'No license', category: 'hygiene', severity: 'info', summary: 'Package declares no license — a legal/reuse concern, recorded but never scored.' },
   { id: 'MTC-SUP-013', title: 'Package not version-pinned', category: 'supply-chain', severity: 'low', summary: 'Installed with @latest/floating spec — the rug-pull enabler; pinning is the recommended control.' },
   { id: 'MTC-SUP-014', title: 'Dependency squat / advisory match', category: 'supply-chain', severity: 'medium', summary: 'A declared dependency resembles a protected package or matches a known advisory by name.' },
   { id: 'MTC-SUP-015', title: 'Pinned version is not published in the registry', category: 'supply-chain', severity: 'medium', summary: 'An exact pinned version is not listed by the registry; the scanner refuses to substitute latest and flags the gap.' },
@@ -109,8 +109,11 @@ export const RULE_CATALOG: RuleDoc[] = [
   { id: 'MTC-SRC-004', title: 'Obfuscated / encoded payload in server code', category: 'injection', severity: 'high', summary: 'Decode-and-execute of an encoded blob, or \\x-escaped / fromCharCode runs hiding logic from review.' },
   { id: 'MTC-SRC-005', title: 'Dynamic module load from a non-literal', category: 'permissions', severity: 'medium', summary: 'require()/import()/__import__ from a variable — loads runtime-chosen (attacker-influenced) code.' },
   { id: 'MTC-SRC-006', title: 'Credential-path read or environment dump in code', category: 'exfiltration', severity: 'high', summary: 'Reads ~/.ssh / .aws/credentials / .netrc, or serializes the whole environment — a sensitive-data source.' },
-  { id: 'MTC-SRC-007', title: 'Unsafe deserialization', category: 'permissions', severity: 'high', summary: 'pickle.loads / yaml.load / node-serialize / marshal.loads — a classic deserialization RCE gadget.' },
+  { id: 'MTC-SRC-007', title: 'Unsafe deserialization', category: 'permissions', severity: 'medium', summary: 'pickle.loads / yaml.load / node-serialize / marshal.loads — a classic deserialization RCE gadget.' },
   { id: 'MTC-SRC-008', title: 'Hardcoded credential value in server code', category: 'exfiltration', severity: 'high', summary: 'A live-looking secret (AWS/GitHub/Slack/JWT/PEM…) embedded in the source, shipped to every install.' },
+  { id: 'MTC-SRC-009', title: 'Untrusted input concatenated into a command sink', category: 'injection', severity: 'medium', summary: 'A shell/process command assembled by concatenation or interpolation — the command-injection flow, not mere presence of a sink.' },
+  { id: 'MTC-SRC-010', title: 'Dynamic evaluation of a non-literal value', category: 'injection', severity: 'high', summary: 'eval / new Function applied to a variable or expression rather than a fixed literal — a direct RCE primitive.' },
+  { id: 'MTC-SRC-011', title: 'Assembled command execution and dynamic evaluation in the same server', category: 'injection', severity: 'high', summary: 'Runtime code both builds shell commands from values and evaluates values as code — two execution primitives in one server.' },
 ];
 
 export function findRule(id: string): RuleDoc | undefined {

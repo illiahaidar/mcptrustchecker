@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-3c873a.svg)](package.json)
-[![Methodology](https://img.shields.io/badge/methodology-mcptrustchecker--1.0-6f42c1.svg)](docs/methodology.md)
+[![Methodology](https://img.shields.io/badge/methodology-mcptrustchecker--1.4-6f42c1.svg)](docs/methodology.md)
 [![Tests](https://img.shields.io/badge/tests-304%20passing-brightgreen.svg)](test)
 [![Rules](https://img.shields.io/badge/rules-78-orange.svg)](docs/rules.md)
 [![No account](https://img.shields.io/badge/account-not%20required-brightgreen.svg)](#why-this-is-different)
@@ -36,7 +36,7 @@ npx mcptrustchecker                # 🔍 scan every MCP server you already have
 
 ## What makes the algorithm unique
 
-The **Capability-Flow Trust Model** (methodology `mcptrustchecker-1.0`) is an **original algorithm designed from scratch for this project** by [Illia Haidar](https://github.com/illiahaidar) — it is not a wrapper around, or derivative of, any existing scanner or methodology. It is named, versioned, fully specified in [docs/methodology.md](docs/methodology.md), and citable via [CITATION.cff](CITATION.cff).
+The **Capability-Flow Trust Model** (methodology `mcptrustchecker-1.4`) is an **original algorithm designed from scratch for this project** by [Illia Haidar](https://github.com/illiahaidar) — it is not a wrapper around, or derivative of, any existing scanner or methodology. It is named, versioned, fully specified in [docs/methodology.md](docs/methodology.md), and citable via [CITATION.cff](CITATION.cff).
 
 MCP Trust Checker scores an MCP server the way an **attacker** reasons about it — not as a bag of regex hits, but as a **Capability-Flow Trust Model**. Every tool is reduced to the roles it can actually play — *untrusted-input ingress*, *sensitive-data source*, *external / exec sink* — derived from behavior, **never** from the server's own (attacker-controllable) annotations. Those roles are wired into a **cross-tool toxic-flow graph** that hunts the *lethal trifecta*: the moment untrusted content, private data, and an exfiltration path co-exist in one agent session — whether inside a single tool or composed across several tools plus the client's built-ins. That is the exact shape behind real-world MCP data-exfiltration exploits, and MCP Trust Checker proves the primitive exists **statically**, with an honest confidence split so a single-tool completion reads `confirmed` and a cross-tool composition reads `strong` — never overclaiming.
 
@@ -61,7 +61,7 @@ An MCP server hands an AI assistant a set of *tools*. Those tool descriptions ar
 ```
    ╭────────────╮
    │  GRADE  D  │   Trust Score 69/100
-   ╰────────────╯   methodology mcptrustchecker-1.0
+   ╰────────────╯   methodology mcptrustchecker-1.4
 
 Toxic flows (untrusted-input → sensitive-source → external-sink)
   [critical] The three trifecta roles are co-present across tools;
@@ -239,7 +239,7 @@ MCP Trust Checker covers the full catalog of known MCP attack techniques in one 
 | Empty/malformed surface ≠ clean | `MTC-META-001` ★ |
 | Config discovery across MCP clients | client-config parser + zero-config auto-discovery |
 | Malicious URL / exfil endpoint in tool metadata | `MTC-INJ-URL-1` ★ |
-| **Implementation-level sinks** — eval / shell-spawn / hardcoded egress / deserialization | `MTC-SRC-001…007` ★ |
+| **Implementation-level sinks** — eval / shell-spawn / hardcoded egress / deserialization | `MTC-SRC-001…011` ★ |
 | Credential-path read / environment dump in server code | `MTC-SRC-006` ★ |
 | Hardcoded secret in the server's source (not just metadata) | `MTC-SRC-008` ★ |
 </details>
@@ -302,7 +302,7 @@ const report  = await scanSurface(surface);
 
 report.score.grade;              // 'A' … 'F'
 report.score.score;              // 0 … 100
-report.score.methodologyVersion; // 'mcptrustchecker-1.0'  ← pin & display this
+report.score.methodologyVersion; // 'mcptrustchecker-1.4'  ← pin & display this
 report.toxicFlows;               // enumerated exfiltration primitives
 renderBadge(report);             // shields.io endpoint JSON for a live trust badge
 ```

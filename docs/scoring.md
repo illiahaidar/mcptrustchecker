@@ -9,6 +9,8 @@ MCP Trust Checker scores two independent things, because "powerful" and "malicio
 
 The rules that count as *capability* (and therefore never lower the grade) are listed in [`src/scoring/model.ts`](../src/scoring/model.ts) (`CAPABILITY_RULES`). Capability findings are still shown in the report — under "Capability observations" — and raise the capability level via [`src/scoring/capability.ts`](../src/scoring/capability.ts). Keeping the axes separate is what stops a legitimate-but-powerful server (a scraper, a browser driver, a filesystem tool) from collapsing to "F". Popularity is never an input.
 
+**Presence vs. flow (why a Google/Unity connector is not "F").** The implementation scanner distinguishes *having* a dangerous sink from *feeding untrusted input into it*. Merely calling `child_process`, `exec`, `eval`, a hardcoded API endpoint, or reading a cloud CLI's credential store (`MTC-SRC-001/002/003/005/006`) is **capability** — it is what a browser driver, a cloud connector, or an official platform SDK is built to do, so it raises the capability level and never the grade. What *is* scored as a threat is the visible injection **flow**: a command assembled by concatenation or template interpolation (`MTC-SRC-009`), or `eval`/`new Function` applied to a runtime value rather than a fixed literal (`MTC-SRC-010`). That is the line between "powerful" and "negligent", drawn from the code itself and no farther than the code can prove.
+
 ## Trust grade: auditable by construction
 
 MCP Trust Checker's Trust Score is designed to be **auditable by construction**: every point is reconstructable from the report, and the same methodology version on the same target always produces the same number. No machine learning, no opinion, no network.

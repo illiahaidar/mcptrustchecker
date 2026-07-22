@@ -247,6 +247,10 @@ export const SECRET_PATTERNS: { id: string; label: string; pattern: RegExp }[] =
   { id: 'google-api-key', label: 'Google API key', pattern: /\bAIza[0-9A-Za-z\-_]{35}\b/ },
   { id: 'stripe-secret', label: 'Stripe secret key', pattern: /\bsk_live_[0-9A-Za-z]{24,}\b/ },
   { id: 'openai-key', label: 'OpenAI key', pattern: /\bsk-[A-Za-z0-9]{20,}T3BlbkFJ[A-Za-z0-9]{20,}\b/ },
-  { id: 'private-key', label: 'PEM private key', pattern: /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/ },
+  // The header alone is not a key: security tooling (redaction filters, secret
+  // scanners, docs) legitimately contains that literal in order to FIND keys.
+  // A real embedded key is the header followed by its base64 body, so require
+  // one — that is what separates a leaked secret from a pattern that hunts it.
+  { id: 'private-key', label: 'PEM private key', pattern: /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----[\r\n]+[A-Za-z0-9+/=\r\n]{100,}/ },
   { id: 'jwt', label: 'JSON Web Token', pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\b/ },
 ];

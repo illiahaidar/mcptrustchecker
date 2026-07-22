@@ -182,7 +182,7 @@ export async function scanSurface(rawSurface: ServerSurface, options: ScanOption
     findings,
     score,
     capabilities,
-    capabilityProfile: computeCapabilityProfile(capabilities, flows),
+    capabilityProfile: computeCapabilityProfile(capabilities, flows, findings),
     coverage: computeCoverage(surface),
     toxicFlows: flows,
     integrity,

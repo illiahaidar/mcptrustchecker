@@ -7,7 +7,7 @@
  * information for deciding how much access to grant.
  */
 
-import type { CapabilityLevel, CapabilityProfile, CapabilityTag, ToolCapability, ToxicFlow } from '../types.js';
+import type { CapabilityLevel, CapabilityProfile, CapabilityTag, Finding, ToolCapability, ToxicFlow } from '../types.js';
 
 const ORDER: CapabilityLevel[] = ['minimal', 'moderate', 'high', 'critical'];
 
@@ -15,8 +15,27 @@ function atLeast(current: CapabilityLevel, candidate: CapabilityLevel): Capabili
   return ORDER.indexOf(candidate) > ORDER.indexOf(current) ? candidate : current;
 }
 
-export function computeCapabilityProfile(capabilities: ToolCapability[], flows: ToxicFlow[]): CapabilityProfile {
+export function computeCapabilityProfile(
+  capabilities: ToolCapability[],
+  flows: ToxicFlow[],
+  findings: Finding[] = [],
+): CapabilityProfile {
   const tagSet = new Set<CapabilityTag>(capabilities.flatMap((c) => c.tags));
+  // The source scan sees what the implementation DOES even when the tool
+  // metadata under-declares it: code that spawns processes is code-exec
+  // capability, a hardcoded endpoint is an external sink, a credential-path
+  // read is a sensitive source. Feeding these into the same tag set keeps one
+  // capability model for both axes of evidence.
+  const ruleTag: Record<string, CapabilityTag> = {
+    'MTC-SRC-001': 'code-exec',
+    'MTC-SRC-002': 'code-exec',
+    'MTC-SRC-003': 'external-sink',
+    'MTC-SRC-006': 'sensitive-source',
+  };
+  for (const f of findings) {
+    const tag = ruleTag[f.ruleId];
+    if (tag) tagSet.add(tag);
+  }
   const has = (t: CapabilityTag): boolean => tagSet.has(t);
   const reasons: string[] = [];
   let level: CapabilityLevel = 'minimal';

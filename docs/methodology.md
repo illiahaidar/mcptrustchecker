@@ -1,4 +1,4 @@
-# Methodology — the Capability-Flow Trust Model (`mcptrustchecker-1.0`)
+# Methodology — the Capability-Flow Trust Model (`mcptrustchecker-1.4`)
 
 This document specifies exactly what MCP Trust Checker does, stage by stage. It is the spec behind every finding. The design goal is **auditability**: nothing here depends on a model's opinion, so a result can be reproduced and defended.
 
@@ -99,7 +99,7 @@ Multi-signal, anchored to a curated protected list ([`src/data/protectedPackages
 - **Damerau-Levenshtein** distance 1–2, **gated by a download anomaly** (a near-miss on a high-traffic name with negligible downloads of its own is malice, not coincidence) and keyboard-adjacency.
 - **Combosquat** suffixes (`-js`, `-server`, …) stripped before comparison.
 - **Provenance/malware signals**: install/pre/post-install scripts (the dominant malware vector), missing repository, missing license.
-- **Unpinned spec** (`MTC-SUP-013`): an `@latest`/floating install spec is the rug-pull *enabler* — flagged on the first scan, before any baseline exists.
+- **Unpinned spec** (`MTC-SUP-013`): an explicit `@latest`/floating install spec is the rug-pull *enabler*. Advisory only, and not raised for a bare scan-by-name (unpinned by construction) — a scored penalty there would fire on essentially every package and say nothing about this one.
 - **Dependency signals** (`MTC-SUP-014`): declared dependencies are run through the same squat check and matched against the known-vuln table by name.
 
 Package metadata is best-effort and **offline by default**; `--online` pulls registry data (npm/PyPI) for richer signals.

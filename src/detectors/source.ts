@@ -10,10 +10,15 @@
  */
 
 import type { Detector, DetectorContext, Finding, SourceFile } from '../types.js';
-import { SOURCE_PATTERNS } from '../data/sourcePatterns.js';
+import { SOURCE_PATTERNS, isNonRuntimePath } from '../data/sourcePatterns.js';
 import { SECRET_PATTERNS } from '../data/injectionPatterns.js';
 
 const MAX_FINDINGS_PER_RULE = 10; // don't drown the report on a big codebase
+
+/** Threat rules assert something about the SERVER's runtime behaviour, so they
+ *  are not raised from test/benchmark/example/release-tooling files. The
+ *  capability rules still fire there — that code really is in the package. */
+const RUNTIME_ONLY_RULES = new Set(['MTC-SRC-009', 'MTC-SRC-010']);
 
 function lineOf(content: string, index: number): number {
   let line = 1;
@@ -43,8 +48,10 @@ export const sourceDetector: Detector = {
     for (const f of files) {
       if (!f || typeof f.content !== 'string') continue;
       const path = typeof f.path === 'string' ? f.path : 'source';
+      const nonRuntime = isNonRuntimePath(path);
 
       for (const p of SOURCE_PATTERNS) {
+        if (nonRuntime && RUNTIME_ONLY_RULES.has(p.id)) continue;
         const seen = perRule.get(p.id) ?? 0;
         if (seen >= MAX_FINDINGS_PER_RULE) continue;
         const m = f.content.match(p.pattern);
@@ -94,6 +101,34 @@ export const sourceDetector: Detector = {
           break; // one secret finding per file is enough
         }
       }
+    }
+
+    // Compound: the server both ASSEMBLES shell commands from runtime values and
+    // EVALUATES runtime values as code. Either alone is a precondition that
+    // legitimate CLI wrappers and template engines routinely trip; together, in
+    // runtime code, they are the dropper shape — an attacker who influences one
+    // has a second primitive waiting. Scored on top of its parts, because the
+    // combination carries information neither part does.
+    const hasAssembledCommand = findings.some((f) => f.ruleId === 'MTC-SRC-009');
+    const hasDynamicEval = findings.some((f) => f.ruleId === 'MTC-SRC-010');
+    if (hasAssembledCommand && hasDynamicEval) {
+      findings.push({
+        ruleId: 'MTC-SRC-011',
+        title: 'Assembled command execution and dynamic evaluation in the same server',
+        category: 'injection',
+        severity: 'high',
+        confidence: 'strong',
+        description:
+          'The implementation builds shell commands out of runtime values AND evaluates runtime values as code. ' +
+          'Each is a separate arbitrary-execution primitive; a server exposing both gives anything that reaches ' +
+          'either one a direct path to running attacker-chosen code.',
+        remediation:
+          'Remove the dynamic eval, and pass command arguments as an argv array instead of building a shell string. ' +
+          'If both are genuinely required, constrain and validate every value that can reach them.',
+        location: { kind: 'server', name: 'implementation' },
+        owasp: 'LLM05:2025 Improper Output Handling',
+        data: { rules: ['MTC-SRC-009', 'MTC-SRC-010'] },
+      });
     }
     return findings;
   },

@@ -104,9 +104,16 @@ test('ANSI escape sequence in metadata is flagged (MTC-UNI-010)', () => {
   assert.ok(unicodeDetector.run(buildCtx(surface)).some((f) => f.ruleId === 'MTC-UNI-010'));
 });
 
-test('unpinned package spec is flagged (MTC-SUP-013)', () => {
+test('an explicit floating spec is flagged (MTC-SUP-013)', () => {
   const f = analyzeProvenance({ registry: 'npm', name: 'x', pinned: false, requestedSpec: 'latest' });
   assert.ok(f.some((x) => x.ruleId === 'MTC-SUP-013'));
+});
+
+test('a scan-by-name (no requested spec) does NOT emit MTC-SUP-013', () => {
+  // Unpinned by construction — reporting it would fire on essentially every
+  // package and say nothing about this one.
+  const f = analyzeProvenance({ registry: 'npm', name: 'x', pinned: false, requestedSpec: null });
+  assert.ok(!f.some((x) => x.ruleId === 'MTC-SUP-013'));
 });
 
 test('a dependency that squats a protected package is flagged (MTC-SUP-014)', () => {

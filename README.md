@@ -322,6 +322,50 @@ A tool that quietly rewrites its description after you approve it (the MCPoison 
 
 ---
 
+## Publish to the MCP Trust Registry (opt-in, off by default)
+
+Scanned a package worth listing? You can submit it to the public **[MCP Trust Registry](https://mcptrustchecker.com/registry)** so everyone else can look it up before installing it.
+
+```bash
+mcptrustchecker publish @scope/server --token <key>    # scan it, then submit it
+mcptrustchecker scan @scope/server --online            # just scan — never publishes, never asks
+```
+
+**Publishing is a separate command, never a side effect of scanning.** `scan` does not publish, does not ask, and does not change behaviour when a key happens to be in your environment — the only way anything is submitted is by typing `publish`, and typing it is the consent. There is no prompt to dismiss and no telemetry. **Only npm and PyPI packages can be submitted for now**; a target with no registry identity (a local directory, a `.tgz`, a manifest, a live URL, a spawned stdio command) is refused with an explanation rather than silently skipped.
+
+`publish` always reads the real published source — it implies `--online`, because submitting a package graded from its name alone would be worse than not grading it at all.
+
+**What is sent is an application, not a verdict.** The request carries the package identity (registry + name, optionally the version) and your explicit consent — no scan report, no findings, no source, nothing about your machine or your configs. **mcptrustchecker.com re-scans the package with its own copy of this engine**, and only that server-side scan is ever published. Your local grade travels along as `localGrade` for comparison only and can never become the listed grade — which is exactly what stops a key-holder from publishing "grade A" for a malicious package.
+
+A missing key or an unpublishable target fails fast, before the package is downloaded. A network failure while submitting warns on stderr and leaves stdout untouched.
+
+Publishing from CI is deliberately not something the GitHub Action does for you — a workflow that submits packages because a secret happens to exist is the same side effect this design removes. Write it as its own step when you want it:
+
+```yaml
+- name: Publish to the MCP Trust Registry
+  run: npx mcptrustchecker publish @scope/server --token "$MCPTRUSTCHECKER_TOKEN"
+  env:
+    MCPTRUSTCHECKER_TOKEN: ${{ secrets.MCPTRUSTCHECKER_TOKEN }}
+```
+
+**Getting a key.** Grab a free API key at **[mcptrustchecker.com/api](https://mcptrustchecker.com/api)** — the same key the hosted scan endpoints use, no card, no account. Store it in the environment rather than in a committed file:
+
+```bash
+export MCPTRUSTCHECKER_TOKEN=<key>          # the key, read automatically
+export MCPTRUSTCHECKER_PUBLISH_URL=https://mcp.internal   # self-hosted deployment (optional)
+```
+
+| Flag | What it does |
+| --- | --- |
+| `publish <package>` | the command — scan the package, then submit it |
+| `--category <slug>` | registry category to file it under (default `other`) |
+| `--token <key>` | API key (env: `MCPTRUSTCHECKER_TOKEN`) |
+| `--publish-url <origin>` | publish to a self-hosted deployment (env: `MCPTRUSTCHECKER_PUBLISH_URL`) |
+
+Credentials also live in `mcptrustchecker.config.json` as `publishToken`, `publishUrl` and `publishCategory`, resolved **flag → environment → config file**. There is deliberately no config key that turns publishing on: a file you inherited from someone else must never be able to submit your packages.
+
+---
+
 ## CI / GitHub integration
 
 ```yaml

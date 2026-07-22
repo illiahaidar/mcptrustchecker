@@ -34,6 +34,23 @@ export { acquireStdio, acquireHttp, ALLOWED_COMMANDS, type StdioSpec, type LiveO
 export { parseClientConfig, isClientConfig, packageFromStdio } from './acquire/clientConfig.js';
 export { fetchNpmMeta, fetchPypiMeta } from './acquire/npm.js';
 
+// Registry publishing (opt-in; sends an application, never a verdict)
+export {
+  buildPublishRequest,
+  publishScan,
+  publishableTarget,
+  publishableTargets,
+  publishEndpoint,
+  normalizeCategory,
+  DEFAULT_PUBLISH_URL,
+  PUBLISH_CATEGORIES,
+  type PublishTarget,
+  type PublishRequest,
+  type PublishResponse,
+  type PublishResult,
+  type PublishOptions,
+} from './publish.js';
+
 // Capabilities & flows (useful for custom analysis / UIs)
 export { extractCapabilities, extractToolCapability } from './util/capabilities.js';
 export { analyzeToxicFlows } from './detectors/toxicFlow.js';

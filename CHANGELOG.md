@@ -5,6 +5,38 @@ deterministic: the **methodology version** is bumped whenever a change could
 move a score, so a grade is always reproducible against the version that
 produced it.
 
+## 1.6.0 — methodology `mcptrustchecker-1.4`
+
+The methodology version is unchanged: nothing here can move a score.
+
+### Added — the `publish` command
+
+- **`mcptrustchecker publish <package>`** scans a package and submits it to the
+  public [MCP Trust Registry](https://mcptrustchecker.com/registry). It is a
+  **separate command on purpose**: `scan` never publishes, never asks, and does
+  not change behaviour when an API key happens to be in the environment. Running
+  `publish` is itself the consent, so there is no prompt to dismiss.
+- **What is sent is an application, never a verdict.** The request carries the
+  package identity plus explicit consent — no report, no findings, no source,
+  nothing about the machine or its client configs. mcptrustchecker.com re-scans
+  the package with its own copy of this engine and publishes *that* result. The
+  locally computed grade travels as `localGrade` for comparison only and can
+  never become the listed grade, so holding an API key cannot publish "grade A"
+  for a malicious package.
+- Only **npm and PyPI** packages can be submitted for now. A target with no
+  registry identity is refused with an explanation rather than skipped silently,
+  and a missing key fails before the package is downloaded.
+- `publish` implies `--online`: submitting a package graded from its name alone
+  would be worse than not grading it at all.
+- **`--token`** (also `MCPTRUSTCHECKER_TOKEN`), **`--category`** and
+  **`--publish-url`** (also `MCPTRUSTCHECKER_PUBLISH_URL`) configure it, resolved
+  flag → environment → config file. There is deliberately **no config key that
+  enables publishing** — a config file you inherited must not be able to submit
+  your packages.
+- The GitHub Action no longer publishes on its own when a token secret exists.
+  Publishing from CI is now an explicit step that runs the command.
+
+
 ## 1.5.0 — methodology `mcptrustchecker-1.4`
 
 This release corrects a systematic bias in the Trust grade: legitimate,

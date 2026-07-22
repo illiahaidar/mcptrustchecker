@@ -460,6 +460,16 @@ export interface McpTrustCheckerConfig {
   suppress?: Suppression[];
   /** Organisational policy the scan is gated against (see {@link Policy}). */
   policy?: Policy;
+  /**
+   * Credentials for the `publish` command. They only ever apply to that command:
+   * a scan never publishes, so there is no setting here that could turn it on.
+   */
+  /** API key for publishing (prefer the `MCPTRUSTCHECKER_TOKEN` env var). */
+  publishToken?: string;
+  /** Origin of the deployment to publish to (self-hosted installs). */
+  publishUrl?: string;
+  /** Registry category slug to file published packages under (default `other`). */
+  publishCategory?: string;
 }
 
 /** A single baseline waiver. `rule` is required; the rest narrow the match. */
@@ -486,8 +496,17 @@ export interface Policy {
 }
 
 /** Config with all defaults resolved — what detectors actually see. */
-export interface ResolvedConfig extends Required<Omit<McpTrustCheckerConfig, 'minGrade' | 'lockfile' | 'policy'>> {
+export interface ResolvedConfig
+  extends Required<
+    Omit<
+      McpTrustCheckerConfig,
+      'minGrade' | 'lockfile' | 'policy' | 'publishToken' | 'publishUrl' | 'publishCategory'
+    >
+  > {
   minGrade?: Grade;
   lockfile?: string;
   policy?: Policy;
+  publishToken?: string;
+  publishUrl?: string;
+  publishCategory?: string;
 }

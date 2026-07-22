@@ -1,7 +1,7 @@
 {
   "name": "mcptrustchecker",
   "version": "1.5.0",
-  "description": "Local-first, deterministic security scanner for Model Context Protocol (MCP) servers. Cross-tool toxic-flow analysis, Unicode-smuggling decode, prompt-injection & supply-chain detection, with an auditable 0–100 Trust Score.",
+  "description": "Local-first, deterministic security scanner for Model Context Protocol (MCP) servers. Cross-tool toxic-flow analysis, Unicode-smuggling decode, prompt-injection & supply-chain detection, with an auditable 0\u2013100 Trust Score.",
   "type": "module",
   "license": "MIT",
   "author": "Illia Haidar <support@mcptrustchecker.com> (https://mcptrustchecker.com)",
@@ -68,5 +68,9 @@
     "@types/node": "^22.10.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
+  },
+  "overrides": {
+    "fast-uri": "^3.1.4",
+    "@hono/node-server": "^2.0.5"
   }
 }

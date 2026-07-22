@@ -61,6 +61,18 @@ what such a server is built to do. The fix sharpens the line between "powerful"
   finding now requires an actual base64 key body, so a tool that hunts keys is
   no longer mistaken for one that leaks them.
 
+### Security — dependency tree
+
+- Pinned patched transitives via npm `overrides`: **`fast-uri` ≥ 3.1.4**
+  ([GHSA-v2hh-gcrm-f6hx](https://github.com/advisories/GHSA-v2hh-gcrm-f6hx), high —
+  reached through `ajv`) and **`@hono/node-server` ≥ 2.0.5**
+  ([GHSA-frvp-7c67-39w9](https://github.com/advisories/GHSA-frvp-7c67-39w9)).
+  Both arrive through `@modelcontextprotocol/sdk`, whose latest release still
+  resolves to the vulnerable ranges, so `npm audit fix` could not resolve them.
+  The scanner only ever imports the SDK's *client* modules, so the Hono server
+  adapter was never on a reachable code path — but a security tool should not
+  ship a tree that its own users' `npm audit` flags. `npm audit` is now clean.
+
 ### Notes
 
 - Development builds `1.4.0`–`1.4.2` were deployment-internal and were never

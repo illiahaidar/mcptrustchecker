@@ -134,7 +134,17 @@ export function longestAllCapsRun(text: string): number {
   let run = 0;
   for (const w of words) {
     const letters = w.replace(/[^A-Za-z]/g, '');
-    if (letters.length >= 2 && letters === letters.toUpperCase() && !TECH_ACRONYMS.has(letters)) {
+    // Count only genuine SHOUTING — a run of long all-caps WORDS. Everything an
+    // audit found firing falsely is excluded structurally: acronyms & cloud/
+    // hardware IDs are short (GPU, NUMA, ECR, CUDA, ≤6 letters) or carry digits
+    // (MI300X, HBM3); documentation section headers end in a colon ("EXAMPLES:").
+    const shouting =
+      letters.length > 6 &&
+      letters === letters.toUpperCase() &&
+      !/\d/.test(w) &&
+      !/:$/.test(w) &&
+      !TECH_ACRONYMS.has(letters);
+    if (shouting) {
       run += 1;
       best = Math.max(best, run);
     } else {

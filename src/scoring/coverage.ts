@@ -8,10 +8,17 @@
  * surface contains. It never changes the score — it explains the score's reach.
  */
 
-import type { Coverage, CoverageLevel, ServerSurface } from '../types.js';
+import type { Coverage, CoverageLevel, ServerSurface, Verification } from '../types.js';
 
-/** Derive the coverage descriptor from an acquired surface. */
-export function computeCoverage(surface: ServerSurface): Coverage {
+/**
+ * Derive the coverage descriptor from an acquired surface.
+ *
+ * `verification` is optional context: when it is `unknown` on a package target,
+ * provenance was not checked (an offline scan), so the verification term was not
+ * applied — an honest caveat records that, matching how offline and online scans
+ * deliberately differ.
+ */
+export function computeCoverage(surface: ServerSurface, verification?: Verification): Coverage {
   const toolSurface =
     (Array.isArray(surface.tools) && surface.tools.length > 0) ||
     (Array.isArray(surface.prompts) && surface.prompts.length > 0) ||
@@ -40,12 +47,27 @@ export function computeCoverage(surface: ServerSurface): Coverage {
         'No tools were enumerated, so prompt-injection, capability and toxic-flow analysis had no tool surface to inspect. ' +
           'To grade a package’s real runtime tools, scan the running server: --command "npx -y <package>".',
       );
+    } else if (surface.toolProvenance === 'static') {
+      caveats.push(
+        `Tools were statically extracted from the published source (${surface.tools.length} recovered), not enumerated from a ` +
+          'running server. Tool-poisoning, Unicode-smuggling, capability and toxic-flow analysis ran on this inferred surface, ' +
+          'but a mis-parsed registration could be missed or mis-attributed, so tool-derived findings are capped below ' +
+          '“confirmed”. To grade the real runtime surface, scan the running server: --command "npx -y <package>".',
+      );
     }
     if (!implementationSource && !liveTransport) {
       caveats.push(
         packageMetadata
           ? 'The implementation source was not read — this reflects registry metadata only. Add --online to fetch and analyze the published package source.'
           : 'The implementation source was not read — this reflects the declared tool metadata only.',
+      );
+    }
+    // Provenance (npm/PyPI attestations) can only be checked with network
+    // access. When it was not, say so and note the verification term was not
+    // applied — an honest scan never lets an unchecked signal read as clean.
+    if (packageMetadata && verification === 'unknown') {
+      caveats.push(
+        'Publisher verification was not checked (provenance requires --online); the verification term was not applied to the score.',
       );
     }
   }

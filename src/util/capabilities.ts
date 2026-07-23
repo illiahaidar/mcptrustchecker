@@ -61,6 +61,23 @@ export function extractToolCapability(tool: ToolDef): ToolCapability {
     }
   }
 
+  // Read-only getter exclusion: a tool whose NAME is a pure getter reads or
+  // enumerates — it neither sends data out nor mutates files. A getter that only
+  // MATCHED a sink/write keyword ('list_webhooks' hitting "webhook", 'get_config'
+  // picking up external-sink) is a spurious toxic-flow leg, so strip those two
+  // roles. Its read roles (sensitive-source / untrusted-input) are kept, and any
+  // getter that ALSO does a write/send verb is left untouched.
+  const isGetter =
+    /^(get|list|read|fetch|search|find|query|show|view|describe|count|check|has|is|lookup)[_-]/i.test(name) ||
+    /(_results?|_list|_status|_info|_config|_details?|_metadata)$/i.test(name);
+  const alsoMutates = /write|create|update|delete|set[_-]|put[_-]|send|post|upload|edit|modif|append|remove|publish|forward/i.test(name);
+  if (isGetter && !alsoMutates) {
+    tags.delete('external-sink');
+    tags.delete('file-write');
+    delete reasons['external-sink'];
+    delete reasons['file-write'];
+  }
+
   return { tool: name, tags: [...tags], reasons };
 }
 

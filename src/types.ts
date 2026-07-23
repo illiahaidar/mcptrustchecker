@@ -128,6 +128,21 @@ export interface PackageMeta {
    * `latest`, and a finding is raised.
    */
   requestedVersionMissing?: boolean;
+  /**
+   * Publisher identity, decided from facts the publisher cannot forge (build
+   * provenance / a vendor-owned scope). Populated only on an `--online` scan
+   * that fetched the registry document; left undefined offline.
+   */
+  publisher?: string | null;
+  /** The known vendor this package belongs to, when established; else null. */
+  vendor?: string | null;
+  /**
+   * How verifiable the source of this package is — a client-adoption-risk
+   * signal computed from the registry document on an `--online` scan. `unknown`
+   * means provenance was not checked (an offline scan); the verification term is
+   * NOT applied in that case, and a coverage caveat records the omission.
+   */
+  verification?: Verification;
   /** URL of the published artifact (npm dist.tarball / PyPI sdist or wheel). */
   tarballUrl?: string | null;
   /** Registry-declared artifact hash: SRI (`sha512-<b64>`) or `<algo>:<hex>`. */
@@ -167,6 +182,18 @@ export interface ServerSurface {
    * the code *does*, not only what the tool metadata *claims*.
    */
   sourceFiles?: SourceFile[];
+  /**
+   * Where {@link tools} came from, when it matters for how far to trust them:
+   *   - `live`   — enumerated from a running server (the real runtime surface).
+   *   - `manifest`— a declared static tool list (a client-config/manifest).
+   *   - `static` — RECONSTRUCTED from the published source by the static tool
+   *      extractor (a package scan that never spawned the server). The tool
+   *      metadata is inferred, not observed, so the engine caps the confidence of
+   *      any tool-derived finding — a statically-inferred tool can never force the
+   *      confirmed-critical F-gate; a live scan is what confirms it.
+   * Undefined means the tools arrived with the surface as-declared (no inference).
+   */
+  toolProvenance?: 'live' | 'manifest' | 'static';
 }
 
 export interface SourceFile {
@@ -272,6 +299,27 @@ export type CoverageLevel =
   | 'metadata' // registry/provenance metadata only — no tools, no source
   | 'empty'; // nothing scannable was found
 
+/**
+ * How verifiable the source of a package is — the third client-adoption-risk
+ * input, alongside capability (blast radius) and coverage (inspection depth).
+ * Ordered strongest → weakest by what the CLIENT can actually check before
+ * adopting the server ("can I trace and read the code that will run?"):
+ *   - `vendor` — proven build provenance to a known vendor's repo, or a
+ *      vendor-owned npm scope (an authorization fact the registry enforces).
+ *   - `source` — the registry publishes a build attestation (Sigstore / SLSA),
+ *      cryptographically binding the artifact to the repo + CI that built it.
+ *   - `repo`   — no provenance, but the package declares a public repository the
+ *      client can open and read. Weaker than provenance (a `repository` field is
+ *      self-declared), yet materially better than nothing: the source is
+ *      inspectable. This is the current ecosystem norm — most legitimate MCP
+ *      packages are here, so it carries only a light discount, not a red flag.
+ *   - `none`   — no provenance and no repository: the source cannot even be
+ *      located, so the client is adopting an opaque artifact.
+ *   - `unknown`— provenance was NOT checked (an offline scan). The verification
+ *      term is skipped so offline and online scans stay honest about it.
+ */
+export type Verification = 'none' | 'repo' | 'source' | 'vendor' | 'unknown';
+
 export interface Coverage {
   level: CoverageLevel;
   /** Which analysis inputs had signal — drives which detectors could contribute. */
@@ -314,7 +362,9 @@ export interface ToxicFlow {
 
 export type Grade = 'A' | 'B' | 'C' | 'D' | 'F';
 
-export interface ScoreVectorItem {
+/** A threat-penalty line: points subtracted by one scored finding. */
+export interface ThreatVectorItem {
+  kind: 'threat';
   ruleId: string;
   category: Category;
   severity: Severity;
@@ -328,12 +378,43 @@ export interface ScoreVectorItem {
   appliedPenalty: number;
 }
 
+/** Which client-adoption-risk term a client vector line represents. */
+export type ClientTerm = 'capability-exposure' | 'verification-discount' | 'coverage-honesty';
+
+/**
+ * A client-adoption-risk line: one of the three subtract-only terms that evolve
+ * the threat score into the client score. Itemised so the whole score stays
+ * auditable — there is no black box, every point is a line here.
+ */
+export interface ClientVectorItem {
+  kind: 'client';
+  term: ClientTerm;
+  /** The input level that set this term (e.g. 'high', 'none', 'metadata'). */
+  level: string;
+  /** Human-readable explanation of what this term reflects. */
+  label: string;
+  /** Points subtracted from the threat score (>= 0; a discount is never a bonus). */
+  appliedPenalty: number;
+}
+
+export type ScoreVectorItem = ThreatVectorItem | ClientVectorItem;
+
 export interface Score {
-  /** 0–100, higher is safer. */
+  /**
+   * 0–100, higher is safer — the CLIENT-ADOPTION-RISK score: the threat score
+   * after the three client terms (capability exposure, verification discount,
+   * coverage honesty). Never rises above {@link threatScore}.
+   */
   score: number;
+  /**
+   * The pure threat score (severity × confidence × diminishing, category caps),
+   * before any client-adoption-risk term. Preserved for audit so the three
+   * itemised terms in {@link vector} are fully reconstructable from it.
+   */
+  threatScore: number;
   /** Final grade after gates. */
   grade: Grade;
-  /** Grade implied by the raw number, before hard gates. */
+  /** Grade implied by the raw (client) number, before hard gates. */
   band: Grade;
   /** Strictest grade cap forced by a hard gate, if any. */
   gateCap?: Grade;

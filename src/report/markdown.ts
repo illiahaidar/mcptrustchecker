@@ -71,6 +71,22 @@ export function renderMarkdown(report: ScanReport): string {
     md.push('');
   }
 
+  // Client-adoption-risk: how the threat score becomes the client score, itemised.
+  const clientTerms = s.vector.filter((v) => v.kind === 'client');
+  if (clientTerms.length) {
+    md.push('### Client-adoption-risk');
+    md.push('');
+    md.push('| Term | Level | Points |');
+    md.push('| --- | --- | ---: |');
+    md.push(`| threat score | — | ${s.threatScore} |`);
+    for (const t of clientTerms) {
+      if (t.kind !== 'client') continue;
+      md.push(`| ${t.term} | ${t.level} | ${t.appliedPenalty > 0 ? `-${t.appliedPenalty}` : '0'} |`);
+    }
+    md.push(`| **client score** | — | **${s.score}** |`);
+    md.push('');
+  }
+
   if (report.toxicFlows.length) {
     md.push('### Toxic flows');
     md.push('');

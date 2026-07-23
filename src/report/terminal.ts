@@ -120,7 +120,7 @@ export function renderTerminal(report: ScanReport, opts: { details?: boolean } =
   const badge = `  GRADE  ${score.grade}  `;
   const cap = report.capabilityProfile;
   out.push(`   ${gradeColor(score.grade, `╭${'─'.repeat(badge.length)}╮`)}`);
-  out.push(`   ${gradeColor(score.grade, `│${badge}│`)}   ${c.bold(`Trust Score ${score.score}/100`)}   ${c.gray('(malice/negligence signals)')}`);
+  out.push(`   ${gradeColor(score.grade, `│${badge}│`)}   ${c.bold(`Trust Score ${score.score}/100`)}   ${c.gray(`(client adoption risk · threat ${score.threatScore})`)}`);
   out.push(`   ${gradeColor(score.grade, `╰${'─'.repeat(badge.length)}╯`)}   ${capColor(cap.level, `Capability ${cap.level.toUpperCase()}`)}   ${c.gray('(blast radius)')}`);
   const cov = report.coverage;
   // Align under "Capability": 3 leading spaces + the 2 box borders + badge width + 3-space gap.
@@ -162,6 +162,22 @@ export function renderTerminal(report: ScanReport, opts: { details?: boolean } =
       const pts = score.categorySubtotals[cat];
       out.push(`  ${padVisible(cat, 16)} ${c.red(`-${pts}`)}`);
     }
+  }
+
+  // Client-adoption-risk terms — how the threat score EVOLVES into the score a
+  // user should read before adopting the server. Itemised so nothing is a black
+  // box: threat score, then each subtract-only term, then the client score.
+  const clientTerms = score.vector.filter((v) => v.kind === 'client');
+  if (clientTerms.length) {
+    out.push('');
+    out.push(c.gray('Client-adoption-risk (from the threat score)'));
+    out.push(`  ${padVisible('threat score', 22)} ${c.bold(`${score.threatScore}`)}`);
+    for (const t of clientTerms) {
+      if (t.kind !== 'client') continue;
+      const sign = t.appliedPenalty > 0 ? c.red(`-${t.appliedPenalty}`) : c.green('  0');
+      out.push(`  ${padVisible(`${t.term} (${t.level})`, 22)} ${sign}`);
+    }
+    out.push(`  ${padVisible('client score', 22)} ${c.bold(`${score.score}/100`)}`);
   }
 
   // Gates.

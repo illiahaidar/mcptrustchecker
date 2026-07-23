@@ -7,7 +7,7 @@
  * risk, and the result is fully deterministic.
  */
 
-import type { Category, Confidence, Grade, Severity } from '../types.js';
+import type { CapabilityLevel, Category, Confidence, CoverageLevel, Grade, Severity, Verification } from '../types.js';
 
 /** Points for the FIRST finding of a severity, before modifiers. */
 export const SEVERITY_WEIGHT: Record<Severity, number> = {
@@ -37,6 +37,53 @@ export const CATEGORY_CAP: Record<Category, number> = {
   'supply-chain': 30,
   network: 25,
   hygiene: 10,
+};
+
+/**
+ * CLIENT-ADOPTION-RISK terms. The Trust Score asks one question — "how safe is
+ * this MCP for the USER who wants to adopt it?" — so three small, subtract-only,
+ * itemised terms EVOLVE the threat score into the client score. They do NOT
+ * revert the capability/threat separation: the threat machinery above is
+ * unchanged; these layer on top, and each is one auditable line in score.vector.
+ *
+ * clientScore = clamp(0..100, round( threatScore − E_cap − E_ver − E_cov ))
+ *
+ * All terms are >= 0, so the client score can never RISE above the threat score,
+ * and a threat-clean server can never be dragged below B by exposure alone
+ * (validated on 31,300 real packages; clean floor = 87).
+ */
+
+/** E_cap — the client's blast radius if the model driving the server is hijacked. */
+export const CAPABILITY_EXPOSURE: Record<CapabilityLevel, number> = {
+  minimal: 0,
+  moderate: 3,
+  high: 6,
+  critical: 10,
+};
+
+/** E_ver — how much the client can trust the SOURCE (less trust ⇒ more subtracted).
+ *  Not applied when verification is `unknown` (an offline scan couldn't check it). */
+// Client-adoption-risk verification discount. Ordered by what the client can
+// actually verify before trusting the artifact. The two verified states cost
+// nothing — provenance/vendor IS the reward. Only the two UNVERIFIED states are
+// discounted, and they are split honestly: a public, inspectable repository (the
+// ecosystem norm — ~75% of unverified packages have one) is a light −1, because
+// the client can still read the code; a package whose source cannot even be
+// located is the real unknown at −5.
+export const VERIFICATION_DISCOUNT: Record<Exclude<Verification, 'unknown'>, number> = {
+  vendor: 0,
+  source: 0,
+  repo: 1,
+  none: 5,
+};
+
+/** E_cov — inspection depth: the shallower the scan, the less a clean grade proves. */
+export const COVERAGE_HONESTY: Record<CoverageLevel, number> = {
+  live: 0,
+  source: 0,
+  manifest: 4,
+  metadata: 8,
+  empty: 10,
 };
 
 export const ALL_CATEGORIES: Category[] = [

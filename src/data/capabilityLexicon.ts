@@ -84,9 +84,14 @@ export const CAPABILITY_SIGNALS: CapabilitySignal[] = [
   {
     tag: 'external-sink',
     keywords: [
+      // Only DIRECTIONAL egress verbs. Bare 'post'/'request'/'forward'/'notify'
+      // were removed: a precision audit found they tag readers and navigation
+      // ('get_posts', 'browser_request_control', 'go_forward', 'notification
+      // settings') as data sinks, inventing half of the toxic-flow false
+      // positives. The specific compound forms below remain.
       'http_request',
       'http request',
-      'post',
+      'http_post',
       'put_request',
       'send_email',
       'send email',
@@ -99,16 +104,17 @@ export const CAPABILITY_SIGNALS: CapabilitySignal[] = [
       'open_pr',
       'create_issue',
       'create_comment',
-      'publish',
-      'upload',
+      'publish_message',
+      'publish_event',
+      'upload_file',
       'curl',
-      'request',
-      'notify',
+      'forward_email',
+      'forward_message',
+      'send_notification',
       'tweet',
       'slack_post',
       'sms',
       'call_api',
-      'forward',
       'export_to',
     ],
   },
@@ -167,7 +173,14 @@ export const CAPABILITY_SIGNALS: CapabilitySignal[] = [
  * avoids the most common capability false positive.
  */
 export const PARAM_NAME_SIGNALS: { tag: CapabilityTag; names: string[] }[] = [
-  { tag: 'external-sink', names: ['url', 'endpoint', 'webhook', 'uri', 'recipient', 'destination'] },
+  // Only DIRECTIONAL egress param names. Bare 'url'/'uri'/'endpoint' were removed:
+  // a `fetch(url)` / web-read tool takes a url to READ FROM, not to send data to,
+  // so those are an SSRF precondition (see SSRF_PARAM_NAMES) — not a flow egress
+  // sink. 'destination' was also removed: it is overwhelmingly a FILE path (a
+  // `move_file(source, destination)` is local I/O, not network egress), which
+  // fabricated a toxic flow on pure filesystem servers. 'webhook'/'recipient'
+  // remain — they name an outbound communication target, not a local path.
+  { tag: 'external-sink', names: ['webhook', 'recipient'] },
   { tag: 'code-exec', names: ['command', 'cmd', 'script', 'shell', 'exec', 'eval'] },
   // 'query' is intentionally omitted — a search "query" is not sensitive-data
   // access; real DB reads are caught by tool-name verbs (query_db, run_sql, …).

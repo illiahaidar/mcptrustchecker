@@ -35,6 +35,15 @@ export interface InjectionPattern {
   baseConfidence: Confidence;
   title: string;
   channels: InjectionChannel[];
+  /**
+   * Whether a match may raise its OWN finding. Weak single-token shapes
+   * (emphasis, self-ordering, context nouns, self-preference) are `false`: they
+   * still register their `kind` toward the compound {@link INJECTION_PATTERNS}
+   * tool-poisoning escalation, but never accuse a package on their own — a
+   * precision audit found these fired ~100% on legitimate documentation
+   * (acronyms, "IMPORTANT", "resolve the id first"). Defaults to `true`.
+   */
+  standalone?: boolean;
 }
 
 const ALL_CHANNELS: InjectionChannel[] = [
@@ -53,6 +62,10 @@ export const INJECTION_PATTERNS: InjectionPattern[] = [
     baseConfidence: 'heuristic',
     title: 'Authority framing in tool metadata',
     channels: ALL_CHANNELS,
+    // Bare emphasis ("IMPORTANT", "ATTENTION") is ~100% FP standalone — it is
+    // ordinary doc emphasis and often introduces a SAFETY warning to the model.
+    // Kept only as a corroborating signal for the compound poisoning rule.
+    standalone: false,
   },
   {
     id: 'MTC-INJ-AUTH-2',
@@ -72,15 +85,10 @@ export const INJECTION_PATTERNS: InjectionPattern[] = [
     title: 'Secrecy directive (conceal action from the user)',
     channels: ALL_CHANNELS,
   },
-  {
-    id: 'MTC-INJ-SECRECY-2',
-    kind: 'authority',
-    pattern: /for compliance|internal requirement|as required by policy|per policy|for security reasons you must/,
-    baseSeverity: 'medium',
-    baseConfidence: 'heuristic',
-    title: 'Fabricated policy / compliance framing',
-    channels: ALL_CHANNELS,
-  },
+  // MTC-INJ-SECRECY-2 (policy/compliance framing) removed: it fired only on
+  // literal compliance/audit tools where "for compliance" / "per policy" is
+  // definitional. Genuine concealment is caught by SECRECY-1 (a hide verb + a
+  // user referent), so the policy-framing variant added noise with no signal.
   // --- Sequencing / "do this first" line-jumping ---
   {
     id: 'MTC-INJ-SEQ-1',
@@ -88,23 +96,20 @@ export const INJECTION_PATTERNS: InjectionPattern[] = [
     // "before using ANY/OTHER tool" is line-jumping; "before using THIS tool"
     // is legitimate self-documentation of a prerequisite and must not match.
     pattern: /before (executing|calling|using|running) (any|another|the other|other) (tool|command|function)|as the (first|very first) step,? (call|invoke|use)|always (consult|call|invoke) this tool( first| immediately)?|you must (also |always |first )?(call|invoke) (this|the )/,
-    // Medium: assertive "call X first" language is common in legitimate tool
-    // docs; the dangerous form (secrecy/target + sequencing) is escalated to
-    // critical by the compound-poisoning rule.
+    // Assertive "call X first" language is overwhelmingly legitimate self-ordering
+    // of a server's OWN tools ("resolve the library id first", "authenticate
+    // first"). Only dangerous as a corroborating signal alongside secrecy/override
+    // (a genuinely hidden step), so it feeds the compound rule but never accuses
+    // on its own.
     baseSeverity: 'medium',
     baseConfidence: 'strong',
     title: 'Forced-sequencing directive (line jumping)',
     channels: ALL_CHANNELS,
+    standalone: false,
   },
-  {
-    id: 'MTC-INJ-SEQ-2',
-    kind: 'sequencing',
-    pattern: /when (this tool |you )?(is invoked|call|use|are asked)|every time (you|the assistant)/,
-    baseSeverity: 'low',
-    baseConfidence: 'heuristic',
-    title: 'Conditional behavior directive',
-    channels: ALL_CHANNELS,
-  },
+  // MTC-INJ-SEQ-2 (the "when invoked / every time you" conditional) removed: it
+  // matched ordinary "When to use this tool…" documentation at 0% precision and
+  // is subsumed by SEQ-1's forced-sequencing shape.
   // --- Sensitive targets referenced in metadata ---
   {
     id: 'MTC-INJ-TARGET-1',
@@ -121,13 +126,16 @@ export const INJECTION_PATTERNS: InjectionPattern[] = [
   {
     id: 'MTC-INJ-TARGET-2',
     kind: 'sensitive-target',
-    // Soft signal: legitimate chat/agent/registry tools reference these; medium
-    // + heuristic so it can't force a critical grade on its own.
+    // Soft signal: legitimate chat/agent/registry tools reference these as their
+    // literal subject (clear_conversation, harden_system_prompt, get_config). A
+    // bare context noun is not solicitation, so it never accuses on its own — it
+    // only matters when it co-occurs with a steering/exfil directive (compound).
     pattern: /system prompt|conversation history|chat history|previous messages|environment details|list of (all )?(available )?tools/,
     baseSeverity: 'medium',
     baseConfidence: 'heuristic',
     title: 'Solicitation of model context / history',
     channels: ALL_CHANNELS,
+    standalone: false,
   },
   // --- Exfil-shaped parameters (evaluated against param descriptions) ---
   {
@@ -179,6 +187,9 @@ export const INJECTION_PATTERNS: InjectionPattern[] = [
     baseConfidence: 'heuristic',
     title: 'Assertive tool self-preference (comparative)',
     channels: ALL_CHANNELS,
+    // A standard intra-server doc idiom ("this is the main tool"); a whole
+    // server's tools routinely carry it. Corroborating signal only.
+    standalone: false,
   },
   // --- Encoded payloads ---
   {

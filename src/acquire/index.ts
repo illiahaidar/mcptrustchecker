@@ -20,6 +20,7 @@ import {
 } from './clientConfig.js';
 import { fetchNpmMeta, fetchPypiMeta } from './npm.js';
 import { fetchPackageSource, surfaceFromArchiveFile, PackageSourceError } from './packageSource.js';
+import { extractToolsFromSource } from './toolExtract.js';
 
 export interface ResolveOptions extends LiveOptions {
   command?: string;
@@ -106,6 +107,19 @@ async function attachPublishedSource(surface: ServerSurface, opts: ResolveOption
     if (!src) return;
     meta.tarballSha256 = src.tarballSha256;
     surface.sourceFiles = src.sourceFiles;
+    // With the real source in hand but no running server to enumerate tools,
+    // reconstruct the tool surface statically so the MCP-specific detectors
+    // (tool-poisoning, unicode smuggling, toxic flows, name collisions, per-tool
+    // capability) have a surface to inspect. Marked `static` so the engine caps
+    // tool-derived finding confidence — an inferred tool never forces the F-gate.
+    // Fail-open: if nothing is recovered, the scan is left exactly as it was.
+    if ((!surface.tools || surface.tools.length === 0) && surface.sourceFiles.length) {
+      const extracted = extractToolsFromSource(surface.sourceFiles);
+      if (extracted.extracted) {
+        surface.tools = extracted.tools;
+        surface.toolProvenance = 'static';
+      }
+    }
   } catch (err) {
     const kind = err instanceof PackageSourceError ? err.kind : 'other';
     const detail = (err as Error).message;

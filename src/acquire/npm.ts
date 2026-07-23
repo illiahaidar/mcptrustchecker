@@ -5,6 +5,7 @@
  */
 
 import type { PackageMeta } from '../types.js';
+import { classifyPublisher } from './publisher.js';
 
 async function getJson(url: string, timeoutMs = 8000): Promise<unknown> {
   const ctrl = new AbortController();
@@ -23,6 +24,72 @@ async function getJson(url: string, timeoutMs = 8000): Promise<unknown> {
 /** Is `v` an exact version (not a range/tag) we can resolve to one artifact? */
 function isExactVersion(v?: string): v is string {
   return typeof v === 'string' && /^\d+\.\d+\.\d+/.test(v);
+}
+
+/**
+ * Normalize the many shapes of a registry "repository" field to a plain https
+ * URL, or null. Deterministic string handling — no AI. This is the SINGLE place
+ * the engine decides "is there an inspectable public repo", so the CLI, registry
+ * and hosted API all derive the same repoUrl and therefore the same verification
+ * tier (`repo` vs `none`). Handles `git+`, `git://`, `git@host:owner/repo`,
+ * trailing `.git`, and object `{ url }` forms.
+ */
+export function normalizeRepoUrl(raw: unknown): string | null {
+  const candidate = raw && typeof raw === 'object' ? (raw as { url?: unknown }).url : raw;
+  if (typeof candidate !== 'string' || !candidate.trim()) return null;
+  const u = candidate
+    .trim()
+    .replace(/^git\+/, '')
+    .replace(/^git:\/\//, 'https://')
+    .replace(/^(ssh:\/\/)?git@([^:/]+)[:/]/, 'https://$2/')
+    .replace(/\.git(#.*)?$/, '')
+    .replace(/^http:\/\//, 'https://');
+  if (!/^https:\/\/[a-z0-9.-]+\//i.test(u)) return null;
+  return u.slice(0, 300);
+}
+
+/**
+ * Best-effort source repository for a PyPI package. PyPI's `project_urls` is a
+ * free-form map whose keys vary wildly (`Source`, `Repository`, `Source Code`,
+ * `GitHub`, `Code`, `Homepage`…), so scan every key for a repository-ish label,
+ * then accept a `Homepage`-style key only when it points at a known forge, and
+ * finally fall back to `home_page`. Mirrors the hosted registry exactly — a
+ * `Source`-only lookup wrongly demoted ~5k legitimately-public PyPI packages to
+ * `none`.
+ */
+function pickPypiRepoUrl(info: Record<string, unknown>): string | null {
+  const rawUrls = info?.project_urls;
+  const urls: Record<string, string> =
+    rawUrls && typeof rawUrls === 'object' ? (rawUrls as Record<string, string>) : {};
+  const keys = Object.keys(urls);
+  const key =
+    keys.find((k) => /source|repository|github|code/i.test(k)) ??
+    keys.find((k) => /home/i.test(k) && /github\.com|gitlab\.com|bitbucket\.org|codeberg\.org/i.test(urls[k] ?? ''));
+  return normalizeRepoUrl(key ? urls[key] : info?.home_page);
+}
+
+/** Public code forges — a homepage/bugs URL here IS locatable source. */
+const CODE_FORGE = /^https:\/\/(www\.)?(github\.com|gitlab\.com|bitbucket\.org|codeberg\.org|sr\.ht|gitea\.)/i;
+
+/**
+ * Best-effort source repository for an npm package. The explicit `repository`
+ * field is strongest, but many legitimate packages (incl. official ones like
+ * `@anthropic-ai/claude-code`) omit it and only set `homepage`/`bugs` pointing at
+ * their GitHub. Those are accepted as source ONLY when they resolve to a known
+ * code forge — a docs `homepage` is not a repository. `/issues|/discussions|/wiki`
+ * suffixes (a `bugs.url`) are trimmed back to the repo root.
+ */
+export function pickNpmRepoUrl(pkg: Record<string, any>, v: Record<string, any> | undefined): string | null {
+  const fromRepo = normalizeRepoUrl(v?.repository ?? pkg?.repository);
+  if (fromRepo) return fromRepo;
+  for (const cand of [v?.homepage, pkg?.homepage, v?.bugs?.url, pkg?.bugs?.url, v?.bugs, pkg?.bugs]) {
+    const raw = typeof cand === 'string' ? cand : undefined;
+    if (!raw) continue;
+    const trimmed = raw.replace(/\/(issues|discussions|wiki|pulls?)(\/.*)?$/i, '');
+    const norm = normalizeRepoUrl(trimmed);
+    if (norm && CODE_FORGE.test(norm)) return norm;
+  }
+  return null;
 }
 
 /**
@@ -70,8 +137,7 @@ export async function fetchNpmMeta(name: string, requested?: string): Promise<Pa
       meta.scripts = v.scripts ?? {};
       meta.dependencies = Object.keys(v.dependencies ?? {});
       meta.license = typeof v.license === 'string' ? v.license : v.license == null ? null : String(v.license);
-      const repo = v.repository;
-      meta.repositoryUrl = typeof repo === 'string' ? repo : repo?.url ?? null;
+      meta.repositoryUrl = pickNpmRepoUrl(packument, v);
       // The published artifact: URL + registry-declared hash (SRI, or legacy sha1 hex).
       meta.tarballUrl = typeof v.dist?.tarball === 'string' ? v.dist.tarball : null;
       meta.tarballIntegrity =
@@ -82,6 +148,12 @@ export async function fetchNpmMeta(name: string, requested?: string): Promise<Pa
             : null;
     }
     meta.publishedAt = version ? packument.time?.[version] ?? null : null;
+    // Publisher identity + verification, from the same document — an ENGINE
+    // signal so the CLI, registry and hosted API all agree on the client score.
+    const identity = classifyPublisher('npm', name, packument, meta.repositoryUrl ?? null);
+    meta.publisher = identity.publisher;
+    meta.vendor = identity.vendor;
+    meta.verification = identity.verification;
   }
 
   const encoded = encodeURIComponent(name).replace('%40', '@');
@@ -117,7 +189,7 @@ export async function fetchPypiMeta(name: string, requested?: string): Promise<P
         ? data.info.version
         : undefined;
     meta.license = data.info.license || null;
-    meta.repositoryUrl = data.info.project_urls?.Source ?? data.info.home_page ?? null;
+    meta.repositoryUrl = pickPypiRepoUrl(data.info);
     // The published artifact: prefer the sdist (real source layout) over a wheel.
     const files = Array.isArray(data.urls) ? data.urls : [];
     const artifact =
@@ -129,6 +201,12 @@ export async function fetchPypiMeta(name: string, requested?: string): Promise<P
         typeof artifact.digests?.sha256 === 'string' ? `sha256:${artifact.digests.sha256}` : null;
       meta.publishedAt = typeof artifact.upload_time_iso_8601 === 'string' ? artifact.upload_time_iso_8601 : null;
     }
+    // Publisher identity + verification from the PyPI document (PEP 740
+    // attestations), same contract as npm and the hosted API.
+    const identity = classifyPublisher('pypi', name, data, meta.repositoryUrl ?? null);
+    meta.publisher = identity.publisher;
+    meta.vendor = identity.vendor;
+    meta.verification = identity.verification;
   } else if (isExactVersion(requested)) {
     // The exact version endpoint returned nothing: the pinned version is not
     // resolvable (unpublished/yanked/hidden). Flag it rather than falling back.

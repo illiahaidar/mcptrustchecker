@@ -13,6 +13,7 @@ import type {
   ServerSurface,
   Severity,
   McpTrustCheckerConfig,
+  Verification,
 } from './types.js';
 import { resolveConfig } from './config.js';
 import { extractCapabilities } from './util/capabilities.js';
@@ -50,6 +51,18 @@ function findingKey(f: Finding): string {
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+}
+
+/**
+ * Verification is an ENGINE signal, computed input-dependently so every mode
+ * agrees. An `--online` scan already classified the fetched package document
+ * (npm/pypi meta path) and stamped `packageMeta.verification`. When it is
+ * absent — an OFFLINE scan, or a target with no package identity — provenance
+ * was not (could not be) checked, so verification is `unknown` and the
+ * verification term is skipped (a coverage caveat records why).
+ */
+function resolveVerification(surface: ServerSurface): Verification {
+  return surface.packageMeta?.verification ?? 'unknown';
 }
 
 /**
@@ -159,6 +172,27 @@ export async function scanSurface(rawSurface: ServerSurface, options: ScanOption
     findings.push(f);
   }
 
+  // STATIC-PROVENANCE CONFIDENCE CAP. When the tool surface was reconstructed from
+  // source (a package scan that never ran the server), a mis-parsed registration
+  // could mis-attribute text to a tool and raise a spurious finding. So no finding
+  // derived from a statically-inferred tool may claim `confirmed`: it is capped at
+  // `strong`. Effect on gates — a `confirmed`-critical F-gate cannot be triggered by
+  // an inferred tool (it becomes a `strong` critical, which floors the grade at D,
+  // not F), so a parser slip can never F-grade a legitimate package; a live scan
+  // (`--command`) is what escalates a real tool-poisoning to `confirmed`/F. Findings
+  // from the trustworthy channels (source code, supply-chain metadata, rug-pull
+  // drift) are untouched — their evidence did not come from the inferred surface.
+  if (surface.toolProvenance === 'static') {
+    const toolDerived = (f: Finding): boolean =>
+      f.location?.kind === 'tool' || /^MTC-(INJ|UNI|FLOW|CAP|COL)/.test(f.ruleId);
+    for (const f of findings) {
+      if (f.confidence === 'confirmed' && toolDerived(f)) {
+        f.confidence = 'strong';
+        f.data = { ...(f.data ?? {}), staticProvenanceCap: true };
+      }
+    }
+  }
+
   findings.sort((a, b) => {
     if (SEVERITY_ORDER[a.severity] !== SEVERITY_ORDER[b.severity])
       return SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity];
@@ -166,7 +200,17 @@ export async function scanSurface(rawSurface: ServerSurface, options: ScanOption
     return a.ruleId < b.ruleId ? -1 : a.ruleId > b.ruleId ? 1 : 0;
   });
 
-  const score = computeScore(findings);
+  // The three client-adoption-risk inputs are all known here, so the final
+  // score assembly lives at the point where capability, coverage and
+  // verification are settled — the score EVOLVES the threat score with them.
+  const capabilityProfile = computeCapabilityProfile(capabilities, flows, findings);
+  const verification = resolveVerification(surface);
+  const coverage = computeCoverage(surface, verification);
+  const score = computeScore(findings, {
+    capabilityLevel: capabilityProfile.level,
+    coverageLevel: coverage.level,
+    verification,
+  });
 
   const findingsBySeverity = Object.fromEntries(SEVERITIES.map((s) => [s, 0])) as Record<Severity, number>;
   for (const f of findings) findingsBySeverity[f.severity] += 1;
@@ -182,8 +226,8 @@ export async function scanSurface(rawSurface: ServerSurface, options: ScanOption
     findings,
     score,
     capabilities,
-    capabilityProfile: computeCapabilityProfile(capabilities, flows, findings),
-    coverage: computeCoverage(surface),
+    capabilityProfile,
+    coverage,
     toxicFlows: flows,
     integrity,
     surfaceDigest: surfaceDigest(surface),

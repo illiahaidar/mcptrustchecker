@@ -6,28 +6,76 @@
  * identical score, and every point is reconstructable from `vector`.
  */
 
-import type { Category, Confidence, Finding, Score, ScoreVectorItem } from '../types.js';
+import type {
+  CapabilityLevel,
+  Category,
+  Confidence,
+  CoverageLevel,
+  Finding,
+  Score,
+  ScoreVectorItem,
+  Verification,
+} from '../types.js';
 import { METHODOLOGY_VERSION } from '../version.js';
 import {
   ALL_CATEGORIES,
   bandForScore,
+  CAPABILITY_EXPOSURE,
   CATEGORY_CAP,
   CONFIDENCE_MULT,
+  COVERAGE_HONESTY,
   DIMINISHING,
   isCapabilityRule,
   SEVERITY_WEIGHT,
   stricterGrade,
+  VERIFICATION_DISCOUNT,
 } from './model.js';
+
+/**
+ * The three inputs that turn the pure THREAT score into the CLIENT-ADOPTION-RISK
+ * score. Supplied by the engine, which knows all three once the surface is
+ * analysed. When omitted (a direct threat-only call), no client term is applied
+ * and the client score equals the threat score.
+ */
+export interface ClientScoringContext {
+  /** Blast radius if the model driving the server were manipulated. */
+  capabilityLevel: CapabilityLevel;
+  /** How much of the target the scan could actually inspect. */
+  coverageLevel: CoverageLevel;
+  /** How verifiable the source is; `unknown` (offline) skips the term. */
+  verification: Verification;
+}
 
 const CONFIDENCE_ORDER: Record<Confidence, number> = { confirmed: 0, strong: 1, heuristic: 2, speculative: 3 };
 const SEVERITY_ORDER: Record<Finding['severity'], number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+
+/**
+ * Plain-language label for each verification tier, from the CLIENT's point of
+ * view ("what can I actually check about this code before I run it?"). Kept here
+ * so the score vector — the public "why this grade" breakdown — reads for a human
+ * rather than surfacing the raw enum token.
+ */
+const VERIFICATION_LABEL: Record<Exclude<Verification, 'unknown'>, string> = {
+  vendor: 'publisher verification (official vendor) — published under a known vendor’s authority',
+  source: 'publisher verification (provenance) — cryptographic build provenance ties the artifact to its source',
+  repo: 'publisher verification (public source) — no provenance, but the source is public and inspectable',
+  none: 'publisher verification (unlocatable) — no provenance and no public repository to inspect',
+};
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/** Compute the Trust Score for a set of findings (capability rules excluded). */
-export function computeScore(findings: Finding[]): Score {
+/**
+ * Compute the Trust Score for a set of findings (capability rules excluded).
+ *
+ * With a {@link ClientScoringContext}, three subtract-only client-adoption-risk
+ * terms EVOLVE the threat score into the client score — each an itemised line in
+ * `vector`, the threat score preserved as `threatScore`. The threat machinery
+ * (severity × confidence × diminishing, category caps, the confirmed-critical
+ * F-gate) is byte-identical whether or not the context is supplied.
+ */
+export function computeScore(findings: Finding[], client?: ClientScoringContext): Score {
   // The grade reflects TRUST only: capability/blast-radius findings raise the
   // capability level (computed elsewhere) but never lower the grade.
   const threat = findings.filter((f) => !isCapabilityRule(f.ruleId));
@@ -65,6 +113,7 @@ export function computeScore(findings: Finding[]): Score {
     const appliedPenalty = round2(rawWeight * confidenceMult * diminishingFactor);
     categoryRaw[f.category] += appliedPenalty;
     vector.push({
+      kind: 'threat',
       ruleId: f.ruleId,
       category: f.category,
       severity: f.severity,
@@ -81,7 +130,51 @@ export function computeScore(findings: Finding[]): Score {
   ) as Record<Category, number>;
 
   const totalPenalty = ALL_CATEGORIES.reduce((sum, c) => sum + categorySubtotals[c], 0);
-  const score = Math.max(0, Math.min(100, Math.round(100 - totalPenalty)));
+
+  // The pure THREAT score — unchanged from v1.5.0. Preserved on the report as a
+  // sub-field so every point of the client score below is reconstructable.
+  const threatScore = Math.max(0, Math.min(100, Math.round(100 - totalPenalty)));
+
+  // CLIENT-ADOPTION-RISK terms: subtract-only, itemised, no black box. Applied
+  // only when the engine supplies the context (offline direct calls stay pure
+  // threat). The client score can never rise above the threat score.
+  let score = threatScore;
+  if (client) {
+    const eCap = CAPABILITY_EXPOSURE[client.capabilityLevel];
+    vector.push({
+      kind: 'client',
+      term: 'capability-exposure',
+      level: client.capabilityLevel,
+      label: `capability blast radius (${client.capabilityLevel}) — client exposure if the model is manipulated`,
+      appliedPenalty: eCap,
+    });
+
+    let eVer = 0;
+    if (client.verification !== 'unknown') {
+      // `unknown` = an offline scan could not check provenance, so the term is
+      // skipped entirely (a coverage caveat records the omission) — never
+      // penalised or credited on a guess.
+      eVer = VERIFICATION_DISCOUNT[client.verification];
+      vector.push({
+        kind: 'client',
+        term: 'verification-discount',
+        level: client.verification,
+        label: VERIFICATION_LABEL[client.verification],
+        appliedPenalty: eVer,
+      });
+    }
+
+    const eCov = COVERAGE_HONESTY[client.coverageLevel];
+    vector.push({
+      kind: 'client',
+      term: 'coverage-honesty',
+      level: client.coverageLevel,
+      label: `inspection depth (${client.coverageLevel}) — how much of the target the scan could see`,
+      appliedPenalty: eCov,
+    });
+
+    score = Math.max(0, Math.min(100, Math.round(threatScore - eCap - eVer - eCov)));
+  }
   const band = bandForScore(score);
 
   // Hard gates. Most gates fire only on `confirmed` findings so a guess can't
@@ -109,6 +202,7 @@ export function computeScore(findings: Finding[]): Score {
 
   return {
     score,
+    threatScore,
     grade,
     band,
     gateCap,

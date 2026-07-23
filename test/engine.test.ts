@@ -55,7 +55,7 @@ test('every emitted rule id exists in the rule catalog', async () => {
 
 test('the report exposes an auditable score vector and digest', async () => {
   const report = await scanFixture('poisoned-server.json'); // has real threat findings
-  assert.equal(report.score.methodologyVersion, 'mcptrustchecker-1.4');
+  assert.equal(report.score.methodologyVersion, 'mcptrustchecker-1.8');
   assert.equal(report.surfaceDigest.length, 64);
   const sum = report.score.vector.reduce((s, v) => s + v.appliedPenalty, 0);
   assert.ok(sum > 0);
@@ -63,8 +63,26 @@ test('the report exposes an auditable score vector and digest', async () => {
 
 test('capability findings do not appear in the scored vector', async () => {
   const report = await scanFixture('toxic-flow-server.json');
-  // The score vector must contain only trust (non-capability) rules.
+  // The threat lines of the vector must contain only trust (non-capability)
+  // rules. Client-adoption-risk lines (kind === 'client') are the three itemised
+  // exposure terms, not findings, and carry no rule id.
   for (const v of report.score.vector) {
+    if (v.kind !== 'threat') continue;
     assert.ok(!v.ruleId.startsWith('MTC-FLOW-00') || v.ruleId === 'MTC-FLOW-001', `capability rule ${v.ruleId} leaked into the score`);
   }
+});
+
+test('the vector itemises the three client-adoption-risk terms (no black box)', async () => {
+  const report = await scanFixture('toxic-flow-server.json'); // offline → verification skipped
+  const client = report.score.vector.filter((v) => v.kind === 'client');
+  const terms = client.map((v) => (v.kind === 'client' ? v.term : ''));
+  // capability-exposure and coverage-honesty always appear; verification is
+  // skipped offline (verification === 'unknown').
+  assert.ok(terms.includes('capability-exposure'), 'capability-exposure term missing');
+  assert.ok(terms.includes('coverage-honesty'), 'coverage-honesty term missing');
+  assert.ok(!terms.includes('verification-discount'), 'offline scan must NOT apply the verification term');
+  // Every point of the client score is reconstructable from the threat score.
+  const clientSubtracted = client.reduce((s, v) => s + v.appliedPenalty, 0);
+  assert.equal(report.score.score, Math.max(0, report.score.threatScore - clientSubtracted));
+  assert.ok(report.score.score <= report.score.threatScore, 'the client score never rises above the threat score');
 });

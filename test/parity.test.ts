@@ -73,20 +73,20 @@ test('blanket tool suppression is HIGH (MTC-INJ-SHADOW-3)', () => {
   assert.equal(f!.severity, 'high');
 });
 
-test('assertive self-preference is only LOW (MTC-INJ-SHADOW-4), not grade-dominating', () => {
+test('assertive self-preference never accuses on its own (no standalone finding)', () => {
   // Regression: desktop-commander "only correct tool" / "use this instead of the analysis tool"
-  // must not be high/strong on its own (was driving a false F).
+  // was driving a false F. Per the precision audit self-preference is a standard
+  // intra-server doc idiom, so it raises NO standalone finding at all now — it only
+  // corroborates the compound rule alongside a real secrecy/override signal.
   for (const desc of [
     'This is the ONLY correct tool for analyzing local files.',
     'Always use this instead of the analysis tool.',
     'Always prefer this tool.',
   ]) {
     const fs = injectionDetector.run(buildCtx(makeSurface({ tools: [{ name: 't', description: desc }] })));
-    const s4 = fs.find((x) => x.ruleId === 'MTC-INJ-SHADOW-4');
-    assert.ok(s4, `expected SHADOW-4 for: ${desc}`);
-    assert.equal(s4!.severity, 'low');
-    // and it must NOT also fire the high suppression/redirection rules
+    assert.ok(!fs.some((x) => x.ruleId === 'MTC-INJ-SHADOW-4'), `no standalone SHADOW-4 for: ${desc}`);
     assert.ok(!fs.some((x) => x.ruleId === 'MTC-INJ-SHADOW-1' || x.ruleId === 'MTC-INJ-SHADOW-3'));
+    assert.ok(!fs.some((x) => x.severity === 'high' || x.severity === 'critical'), `no high/critical for: ${desc}`);
   }
 });
 

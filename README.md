@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-3c873a.svg)](package.json)
-[![Methodology](https://img.shields.io/badge/methodology-mcptrustchecker--1.4-6f42c1.svg)](docs/methodology.md)
+[![Methodology](https://img.shields.io/badge/methodology-mcptrustchecker--1.8-6f42c1.svg)](docs/methodology.md)
 [![Tests](https://img.shields.io/badge/tests-304%20passing-brightgreen.svg)](test)
 [![Rules](https://img.shields.io/badge/rules-78-orange.svg)](docs/rules.md)
 [![No account](https://img.shields.io/badge/account-not%20required-brightgreen.svg)](#why-this-is-different)
@@ -36,7 +36,7 @@ npx mcptrustchecker                # 🔍 scan every MCP server you already have
 
 ## What makes the algorithm unique
 
-The **Capability-Flow Trust Model** (methodology `mcptrustchecker-1.4`) is an **original algorithm designed from scratch for this project** by [Illia Haidar](https://github.com/illiahaidar) — it is not a wrapper around, or derivative of, any existing scanner or methodology. It is named, versioned, fully specified in [docs/methodology.md](docs/methodology.md), and citable via [CITATION.cff](CITATION.cff).
+The **Capability-Flow Trust Model** (methodology `mcptrustchecker-1.8`) is an **original algorithm designed from scratch for this project** by [Illia Haidar](https://github.com/illiahaidar) — it is not a wrapper around, or derivative of, any existing scanner or methodology. It is named, versioned, fully specified in [docs/methodology.md](docs/methodology.md), and citable via [CITATION.cff](CITATION.cff).
 
 MCP Trust Checker scores an MCP server the way an **attacker** reasons about it — not as a bag of regex hits, but as a **Capability-Flow Trust Model**. Every tool is reduced to the roles it can actually play — *untrusted-input ingress*, *sensitive-data source*, *external / exec sink* — derived from behavior, **never** from the server's own (attacker-controllable) annotations. Those roles are wired into a **cross-tool toxic-flow graph** that hunts the *lethal trifecta*: the moment untrusted content, private data, and an exfiltration path co-exist in one agent session — whether inside a single tool or composed across several tools plus the client's built-ins. That is the exact shape behind real-world MCP data-exfiltration exploits, and MCP Trust Checker proves the primitive exists **statically**, with an honest confidence split so a single-tool completion reads `confirmed` and a cross-tool composition reads `strong` — never overclaiming.
 
@@ -61,7 +61,7 @@ An MCP server hands an AI assistant a set of *tools*. Those tool descriptions ar
 ```
    ╭────────────╮
    │  GRADE  D  │   Trust Score 69/100
-   ╰────────────╯   methodology mcptrustchecker-1.4
+   ╰────────────╯   methodology mcptrustchecker-1.8
 
 Toxic flows (untrusted-input → sensitive-source → external-sink)
   [critical] The three trifecta roles are co-present across tools;
@@ -250,13 +250,14 @@ Full list: **[docs/rules.md](docs/rules.md)** · run `mcptrustchecker rules`.
 
 ---
 
-## Three axes: Trust (grade), Capability (blast radius), Coverage (depth)
+## The axes: Trust (grade), Capability (blast radius), Coverage (depth), Verification (source)
 
-A single number can't answer "should I use this server?" — because **"powerful" and "malicious" are different questions**, and a clean grade means nothing if the scan barely saw the server. So MCP Trust Checker reports three independent things:
+A single number can't answer "should I use this server?" — because **"powerful" and "malicious" are different questions**, and a clean grade means nothing if the scan barely saw the server. So MCP Trust Checker separates the signals, then folds the client-adoption-risk ones back into the grade transparently (see [scoring ↓](#the-trust-grade-is-auditable-by-construction)):
 
-- **Trust — the A–F grade.** Driven by *threat* signals: prompt-injection with concealment, embedded secrets, Unicode smuggling, typosquatting, known CVEs, rug-pull drift, annotation lies, a single tool built as an exfiltration primitive. Answers **"any sign this server is malicious or negligent?"**
-- **Capability — a level (Minimal → Critical).** Driven by what the server *can do*: code execution, filesystem writes, network egress, the cross-tool toxic-flow surface. Answers **"how much damage if the model driving it is manipulated?"** — a fact to size access against, **not** a mark against the server.
-- **Coverage — a level (Live → Source → Manifest → Metadata → Empty).** How much the scan could actually inspect. A Grade A from a `metadata`-only scan (no tools enumerated, no code read) is **not** the assurance of a Grade A from a `live` scan that saw the real runtime tools. Coverage never changes the score — it states the score's reach, so a shallow scan is never mistaken for a clean bill of health. When coverage is partial, the report says exactly what it could not see.
+- **Trust — the A–F grade.** Driven by *threat* signals: prompt-injection with concealment, embedded secrets, Unicode smuggling, typosquatting, known CVEs, rug-pull drift, annotation lies, a single tool built as an exfiltration primitive. Answers **"any sign this server is malicious or negligent?"** — this is the pure `threatScore`, preserved on every report.
+- **Capability — a level (Minimal → Critical).** Driven by what the server *can do*: code execution, filesystem writes, network egress, the cross-tool toxic-flow surface. Answers **"how much damage if the model driving it is manipulated?"** — a fact to size access against, **not** a mark against the server. It contributes a small **capability-exposure** term to the client score.
+- **Coverage — a level (Live → Source → Manifest → Metadata → Empty).** How much the scan could actually inspect. A Grade A from a `metadata`-only scan (no tools enumerated, no code read) is **not** the assurance of a Grade A from a `live` scan that saw the real runtime tools. It contributes a small **coverage-honesty** term, so a shallow scan is never mistaken for a clean bill of health. When coverage is partial, the report says exactly what it could not see.
+- **Verification — the source (Vendor → Source → None; Unknown offline).** Established from facts the publisher cannot forge — npm/PyPI build provenance (Sigstore/SLSA) and vendor-owned scopes — computed by the engine on an `--online` scan so the CLI, registry and hosted API all agree. It contributes a small **verification-discount** term. Offline it is `Unknown` and the term is skipped (a caveat says so), because an unchecked signal must never read as verified.
 
 ```
 firecrawl   Trust B (81/100)   Capability CRITICAL   Coverage LIVE     → trustworthy, but huge blast radius — grant carefully
@@ -269,9 +270,13 @@ This is why MCP Trust Checker doesn't collapse every capable server into "F" (wh
 
 ## The Trust grade is auditable by construction
 
+Every scan mode answers **one** question: *how safe is this MCP for the **user** who wants to adopt it* — the client's adoption risk, not a judgement of the developer. So the score is computed in two auditable stages: a pure **threat score**, then three small, subtract-only **client-adoption-risk** terms that evolve it into the final **client score**. Both stages ship in the itemized `vector`.
+
+**Stage 1 — the threat score** (unchanged; malice/negligence only):
+
 ```
-TrustScore = clamp( 100 − Σ_categories min(CategoryCap, Σ penalty), 0, 100 )
-penalty    = severity_weight × confidence_multiplier × diminishing_factor    (threat findings only)
+ThreatScore = clamp( 100 − Σ_categories min(CategoryCap, Σ penalty), 0, 100 )
+penalty     = severity_weight × confidence_multiplier × diminishing_factor    (threat findings only)
 ```
 
 | Severity | Weight | | Confidence | × |
@@ -284,9 +289,27 @@ penalty    = severity_weight × confidence_multiplier × diminishing_factor    (
 - **Diminishing returns** (`1 · ½ · ¼ · …`) so 40 copies of one nit can't tank a server and benign passes can't dilute one critical.
 - **Per-category caps** (injection 50, exfiltration 50, permissions 35, supply-chain 30, network 25, hygiene 10).
 - **Hard gates** (weakest-link): a **confirmed critical → F**; **any** critical → at most **D**; a confirmed high → at most **C**; two → **D**. Most gates fire only on `confirmed` findings so a guess never forces a cap — but no critical of any confidence can score above D.
+
+**Stage 2 — the client score** (the number you read):
+
+```
+ClientScore = clamp( round( ThreatScore − E_cap − E_ver − E_cov ), 0, 100 )
+Grade       = stricter( band(ClientScore), threat_gate_cap )        // the F-gate is never softened
+```
+
+Three subtract-only terms, each **one itemized line** in `vector` — no black box, and the score can never *rise* above the threat score:
+
+| Term | Meaning (the client's risk in adopting) | Points |
+| --- | --- | --- |
+| **E_cap** — capability exposure | blast radius if the model driving the server is manipulated | minimal 0 · moderate 3 · high 6 · critical 10 |
+| **E_ver** — verification discount | how verifiable the *source* is (build provenance / vendor scope / public repo) | vendor 0 · provenance 0 · public repo 1 · none 5 · **unknown → term skipped** |
+| **E_cov** — coverage honesty | how much of the target the scan could actually inspect | live 0 · source 0 · manifest 4 · metadata 8 · empty 10 |
+
+- **Verification is an engine signal**, computed from the fetched npm/PyPI document (Sigstore/SLSA provenance + vendor-owned scope) on an `--online` scan — identical logic in the CLI, the registry and the hosted API, so every mode agrees. An **offline** scan cannot check provenance, so verification is `unknown`, the term is **skipped**, and a coverage caveat records the omission — an unchecked signal never reads as clean.
+- The terms are **subtract-only**: a threat-clean server is never dragged below **B** by exposure alone (validated on 31,300 real packages; clean floor = 87), and the confirmed-critical **F-gate holds** regardless.
 - **Bands:** A 90–100 · B 80–89 · C 70–79 · D 60–69 · F 0–59.
 
-Every report ships the full itemized `vector` and `methodologyVersion`. **Same methodology version + same target ⇒ byte-identical score.** Details: **[docs/scoring.md](docs/scoring.md)**.
+Every report ships the full itemized `vector` (threat penalties **and** the three client terms), the preserved `threatScore`, and the `methodologyVersion`. **Same methodology version + same target ⇒ byte-identical score.** Details: **[docs/scoring.md](docs/scoring.md)**.
 
 ---
 
@@ -302,7 +325,7 @@ const report  = await scanSurface(surface);
 
 report.score.grade;              // 'A' … 'F'
 report.score.score;              // 0 … 100
-report.score.methodologyVersion; // 'mcptrustchecker-1.4'  ← pin & display this
+report.score.methodologyVersion; // 'mcptrustchecker-1.8'  ← pin & display this
 report.toxicFlows;               // enumerated exfiltration primitives
 renderBadge(report);             // shields.io endpoint JSON for a live trust badge
 ```

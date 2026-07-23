@@ -25,6 +25,37 @@ function firstMatch(regex: RegExp, text: string): string | undefined {
   return m ? m[0] : undefined;
 }
 
+// Kinds whose match is a real accusation in a functional tool but only a
+// DOCUMENTED example in a detector/guard tool or behind a defensive caveat.
+// In that mention-vs-use context, and absent corroboration by a second injection
+// kind, they are downgraded to a low heuristic rather than a high accusation —
+// a scanner that flags "tool poisoning" on a legitimate injection-detector or a
+// safety warning destroys client trust.
+const MENTION_VS_USE_KINDS = new Set<string>(['override', 'command-in-prose', 'sensitive-target']);
+
+// A tool whose very PURPOSE is to detect / scan / guard against malicious text:
+// an override phrase in its metadata is its subject matter, not a planted payload.
+const DEFENSIVE_TOOL_NAME =
+  /detect|scan|guard|vet|sentinel|audit|complian|firewall|sanitiz|moderat|classif|injection|malicious|threat|is[_-]?safe|check[_-]?command|shield|policy/i;
+// The phrase is framed as an example / quotation, or an explicit "do not obey" caveat.
+const DEFENSIVE_FRAME =
+  /such as|e\.?g\.?|for example|for instance|patterns? like|examples?\s*:|do not (obey|follow|execute|act on|comply)|ignore any (instructions|prompts?|text)|may (contain|include)|might contain|treat [^.]* as (untrusted|data)/i;
+
+function isDefensiveContext(toolName: string | undefined, text: string): boolean {
+  return DEFENSIVE_TOOL_NAME.test(toolName ?? '') || DEFENSIVE_FRAME.test(text);
+}
+
+// A nearby verb that turns a credential-path reference into actual access/exfil.
+const EXFIL_VERB = /send|include|append|attach|paste|upload|exfiltrat|leak|return|reveal|copy|forward|\bread(s|ing)?\b|\baccess(es|ing)?\b|\bdump\b|\bopen\b|\bcat /i;
+// A tool that legitimately operates ON ssh/credentials/config as its own subject.
+const SELF_CREDENTIAL_TOOL = /ssh|known_hosts|credential|config|keychain|dotfile|\benv\b/i;
+// The model is being TOLD to run the command — what makes a prose command an
+// accusation rather than a documented example.
+const MODEL_RUN_DIRECTIVE = /before (answer|respond)|you (must|should) (run|execute)|execute this (first|command)|run this (first|before|command)|silently (run|execute)|then run/i;
+// A tool whose own function is running/deleting on a shell — a "rm -rf" in its
+// description is documenting itself, not injecting.
+const SHELL_TOOL_NAME = /command|shell|\bexec|terminal|bash|\brun_|process|delete|\brm\b|uninstall|cleanup/i;
+
 export const injectionDetector: Detector = {
   id: 'injection',
   stage: 2,
@@ -34,18 +65,72 @@ export const injectionDetector: Detector = {
 
     for (const field of collectTextFields(ctx.surface)) {
       const kindsHit = new Set<string>();
-
+      // PASS 1 — detect every signal (populate kindsHit) and collect the ones
+      // eligible to raise their own finding. Weak single-token shapes (emphasis,
+      // self-ordering, context nouns, self-preference — `standalone: false`)
+      // register their kind for the compound rule but are never collected here.
+      const hits: { p: (typeof PATTERNS)[number]; match: string }[] = [];
       for (const p of PATTERNS) {
         if (!p.meta.channels.includes(field.channel as never)) continue;
         const match = firstMatch(p.regex, field.text);
         if (!match) continue;
         kindsHit.add(p.kind);
+        if (p.meta.standalone !== false) hits.push({ p, match });
+      }
+
+      // ALL-CAPS shouting is a CORROBORATING signal only — standalone it fired
+      // ~100% FP on acronyms, section headers ("PATTERN EXAMPLES:") and safety
+      // warnings ("IMPORTANT: DO NOT …"). Feed the compound rule, never accuse.
+      if (
+        (field.channel === 'tool-description' ||
+          field.channel === 'param-description' ||
+          field.channel === 'server-instructions') &&
+        longestAllCapsRun(field.text) >= ALLCAPS_RUN_WORDS
+      ) {
+        kindsHit.add('authority');
+      }
+
+      const toolName = field.location.name;
+      const defensive = isDefensiveContext(toolName, field.text);
+
+      // PASS 2 — raise each standalone finding, applying mention-vs-use downgrades
+      // now that kindsHit is complete (so corroboration can be judged).
+      for (const { p, match } of hits) {
+        let severity: Severity = p.meta.baseSeverity;
+        let confidence = p.meta.baseConfidence;
+        const corroborated = [...kindsHit].some((k) => k !== p.kind);
+
+        if (MENTION_VS_USE_KINDS.has(p.kind) && !corroborated) {
+          if (p.kind === 'sensitive-target') {
+            // A credential-path reference is only HIGH when a read/exfil verb sits
+            // near it AND the tool is not itself an ssh/credentials/config utility
+            // (whose subject legitimately IS that path).
+            if (!EXFIL_VERB.test(field.text) || SELF_CREDENTIAL_TOOL.test(toolName ?? '')) {
+              severity = 'low';
+              confidence = 'heuristic';
+            }
+          } else if (p.kind === 'command-in-prose') {
+            // A shell command is a HIGH accusation only when the model is told to
+            // RUN it. In a shell/exec/delete tool documenting its own behaviour,
+            // or a scanner, a bare "rm -rf" is an example — downgrade.
+            if (!MODEL_RUN_DIRECTIVE.test(field.text) && (defensive || SHELL_TOOL_NAME.test(toolName ?? ''))) {
+              severity = 'low';
+              confidence = 'heuristic';
+            }
+          } else if (defensive) {
+            // An override phrase documented in a detector/guard tool or guarded by
+            // a "do not obey" caveat is being described, not planted.
+            severity = 'low';
+            confidence = 'heuristic';
+          }
+        }
+
         findings.push({
           ruleId: p.id,
           title: p.meta.title,
           category: 'injection',
-          severity: p.meta.baseSeverity,
-          confidence: p.meta.baseConfidence,
+          severity,
+          confidence,
           description:
             `${p.meta.title} detected in the ${field.location.field ?? 'text'} of ` +
             `${field.location.kind}${field.location.name ? ` "${field.location.name}"` : ''}. ` +
@@ -63,9 +148,9 @@ export const injectionDetector: Detector = {
 
       // Escalation to CRITICAL requires a genuinely malicious signal — secrecy
       // (conceal from the user) or an instruction override — co-occurring with
-      // at least one other poisoning signal. A mere sensitive-target reference
-      // is NOT enough (legit tools reference credentials/context), nor is plain
-      // emphasis + sequencing ("IMPORTANT: call X first").
+      // at least one other poisoning signal (now including the weak shapes and
+      // ALL-CAPS that no longer accuse on their own). A mere sensitive-target
+      // reference or plain emphasis is not enough.
       const strongSignal = kindsHit.has('secrecy') || kindsHit.has('override');
       if (strongSignal && kindsHit.size >= 2) {
         findings.push({
@@ -83,25 +168,6 @@ export const injectionDetector: Detector = {
           evidence: field.text.slice(0, 200),
           owasp: 'LLM01:2025 Prompt Injection',
           data: { kinds: [...kindsHit] },
-        });
-      }
-
-      // ALL-CAPS shouting (weak signal, contextual).
-      if (
-        (field.channel === 'tool-description' ||
-          field.channel === 'param-description' ||
-          field.channel === 'server-instructions') &&
-        longestAllCapsRun(field.text) >= ALLCAPS_RUN_WORDS
-      ) {
-        findings.push({
-          ruleId: 'MTC-INJ-CAPS',
-          title: 'Excessive ALL-CAPS emphasis in metadata',
-          category: 'injection',
-          severity: 'low' as Severity,
-          confidence: 'heuristic',
-          description: 'A run of shouted words is a common way to give injected instructions false authority.',
-          location: field.location,
-          evidence: field.text.slice(0, 120),
         });
       }
 

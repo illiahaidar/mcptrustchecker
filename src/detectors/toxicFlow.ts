@@ -190,7 +190,8 @@ export function analyzeToxicFlows(ctx: DetectorContext): FlowAnalysis {
         `Tools that read sensitive data ([${sources.join(', ')}]) and tools that can send data out ` +
         `([${sinks.join(', ')}]) are exposed together. An agent can move private data to the sink.`,
       remediation: 'Keep secret-reading and egress capabilities on separate, separately-approved servers.',
-      location: { kind: 'flow' },
+      location: { kind: 'flow', name: `${sources[0] ?? '?'} → ${sinks.find((k) => !sources.includes(k)) ?? sinks[0] ?? '?'}` },
+      evidence: `sources [${sources.join(', ')}] → sinks [${sinks.join(', ')}]`.slice(0, 160),
       owasp: 'LLM02:2025 Sensitive Information Disclosure',
       references: FLOW_REFS,
       data: { sources, sinks },
@@ -220,7 +221,8 @@ export function analyzeToxicFlows(ctx: DetectorContext): FlowAnalysis {
         `Untrusted-input tools ([${untrusted.join(', ')}]) co-exist with external-action tools ([${sinks.join(', ')}]). ` +
         `A prompt injection could cause unwanted external actions, though no direct sensitive-data leak path was found.`,
       remediation: 'Require confirmation for state-changing/egress actions triggered after processing untrusted content.',
-      location: { kind: 'flow' },
+      location: { kind: 'flow', name: `${untrusted[0] ?? '?'} → ${sinks[0] ?? '?'}` },
+      evidence: `untrusted [${untrusted.join(', ')}] → sinks [${sinks.join(', ')}]`.slice(0, 160),
       owasp: 'LLM06:2025 Excessive Agency',
       references: FLOW_REFS,
       data: { untrusted, sinks },

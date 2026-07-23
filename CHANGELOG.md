@@ -5,6 +5,91 @@ deterministic: the **methodology version** is bumped whenever a change could
 move a score, so a grade is always reproducible against the version that
 produced it.
 
+## 1.8.0 — methodology `mcptrustchecker-1.8`
+
+This release turns the scanner from an advanced npm auditor into a real
+**MCP-threat** scanner, and makes the Trust Score an explicit
+**client-adoption-risk** score. Everything runs inside the **one engine**, so the
+offline CLI, the registry and the hosted API produce an identical score and
+findings for identical input. **The methodology version moves to
+`mcptrustchecker-1.8` because grades move.**
+
+### Added — static tool extraction (the MCP-specific detectors finally fire)
+
+- A package scan never spawns the server, so `tools` was empty and the
+  MCP-specific detectors — **tool poisoning** (prompt injection in a tool's
+  description/params), **hidden-Unicode smuggling**, **cross-tool toxic flows**
+  (the lethal trifecta), tool-name **collisions** and **per-tool capability** —
+  had nothing to inspect. The new **static tool extractor** (`src/acquire/
+  toolExtract.ts`) reconstructs the tool surface from the published source
+  (JS/TS `registerTool`/`.tool`/`ListTools` handlers, incl. same-file `const`
+  resolution; Python FastMCP `@mcp.tool` and low-level `Tool(...)`), so those
+  detectors now run on npm/PyPI packages.
+- **Conservative by design — biased to MISS, never to mis-attribute.** Only
+  recognised SDK call shapes are read; test/example/fixture files are skipped;
+  anything ambiguous is dropped (a missed tool leaves the scan where it was, a
+  mis-attributed one would be worse). The surface is marked `toolProvenance:
+  'static'`, and a coverage caveat states how many tools were recovered.
+- **Confidence guard.** A finding derived from a statically-inferred tool is
+  capped below `confirmed`, so a parse slip can never trigger the
+  confirmed-critical **F-gate** — a live scan (`--command`) is what escalates a
+  real tool-poisoning to F.
+
+### Changed — the score evolves the threat score with three itemized terms
+
+- The capability/threat separation is **unchanged**: the threat machinery
+  (severity × confidence × diminishing, per-category caps, the confirmed-critical
+  F-gate) is byte-identical. Three small, **subtract-only** client-adoption-risk
+  terms now evolve the threat score into the client score:
+  - **Capability exposure** `E_cap` — the client's blast radius: `minimal 0 ·
+    moderate 3 · high 6 · critical 10`.
+  - **Verification discount** `E_ver` — how verifiable the source is: `vendor 0 ·
+    provenance (source) 0 · public repo 1 · none 5`; skipped when verification is
+    `unknown` (offline).
+  - **Coverage honesty** `E_cov` — inspection depth: `live 0 · source 0 · manifest
+    4 · metadata 8 · empty 10`.
+- `ClientScore = clamp(0..100, round(ThreatScore − E_cap − E_ver − E_cov))`, and
+  `grade = stricter(band(ClientScore), threatGateCap)` — **the F-gate is never
+  softened**, and the score can never *rise* above the threat score. Each term is
+  **one itemized line** in `score.vector` (`kind: 'client'`) and the pure
+  `threatScore` is preserved as a sub-field — no black box.
+
+### Changed — injection precision (a per-rule false-positive audit)
+
+- A precision audit found the single-token injection patterns fired almost
+  entirely on legitimate documentation. They no longer accuse on their own:
+  bare emphasis (`IMPORTANT`), ALL-CAPS acronyms/hardware IDs, doc section
+  headers, self-ordering prerequisites (`resolve the id first`) and comparative
+  self-preference now only **corroborate** the compound tool-poisoning rule.
+- **Mention-vs-use** disambiguation: an override/command/credential-path phrase
+  quoted inside a detector/guard tool, or behind a "do not obey" caveat, is
+  documented — not planted — so it is downgraded unless corroborated. The
+  `Ignore previous instructions` override rule (the only real criticals) is kept.
+- **Capability tags** were tightened so toxic-flow analysis stops firing on
+  read-only getters (`get_*`/`list_*` are never an egress sink), web-fetch URL
+  params (a `fetch(url)` reads, it does not egress) and local file-move
+  `destination` paths.
+
+### Added — verification as an engine signal (with a `repo` tier)
+
+- Publisher classification (npm/PyPI build provenance via Sigstore/SLSA + vendor
+  scopes) is computed **inside the engine** on an `--online` scan and stored on
+  the report (`packageMeta.verification` / `publisher` / `vendor`).
+- A new **`repo`** tier sits between provenance and nothing: a package with a
+  public, inspectable repository but no provenance is the ecosystem norm and is
+  discounted only lightly (−1), distinct from a package whose source cannot be
+  located at all (−5). The repository is resolved robustly from the registry
+  document — npm `repository`, else a `homepage`/`bugs` URL on a known code
+  forge; PyPI `project_urls`/`home_page` — so packages that omit `repository`
+  (e.g. `@anthropic-ai/claude-code`) are not falsely flagged "no source".
+- **Offline scans cannot check provenance**, so verification is a distinct
+  `unknown`: the term is **skipped** and a coverage caveat records the omission.
+
+### Changed — reports
+
+- The terminal and Markdown reports gained a **client-adoption-risk** breakdown
+  (threat score → each term → client score).
+
 ## 1.6.0 — methodology `mcptrustchecker-1.4`
 
 The methodology version is unchanged: nothing here can move a score.

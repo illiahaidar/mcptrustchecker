@@ -9,10 +9,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-3c873a.svg)](package.json)
 [![Methodology](https://img.shields.io/badge/methodology-mcptrustchecker--1.9-6f42c1.svg)](docs/methodology.md)
-[![Tests](https://img.shields.io/badge/tests-304%20passing-brightgreen.svg)](test)
-[![Rules](https://img.shields.io/badge/rules-78-orange.svg)](docs/rules.md)
+[![Tests](https://img.shields.io/badge/tests-412%20passing-brightgreen.svg)](test)
+[![Rules](https://img.shields.io/badge/rules-81-orange.svg)](docs/rules.md)
 [![No account](https://img.shields.io/badge/account-not%20required-brightgreen.svg)](#why-this-is-different)
 [![Offline](https://img.shields.io/badge/runs-100%25%20offline-brightgreen.svg)](#why-this-is-different)
+[![Online scanner](https://img.shields.io/badge/online%20scanner-free-c4f542.svg)](https://mcptrustchecker.com/scan)
 [![Free hosted API](https://img.shields.io/badge/hosted%20API-free-c4f542.svg)](https://mcptrustchecker.com/api)
 [![Trust Registry](https://img.shields.io/badge/trust%20registry-browse-8b87f7.svg)](https://mcptrustchecker.com/registry)
 
@@ -26,7 +27,7 @@
 npx mcptrustchecker                # 🔍 scan every MCP server you already have installed — zero config
 ```
 
-**Zero install?** Run the same deterministic engine as a **free public web API → [mcptrustchecker.com/api](https://mcptrustchecker.com/api)**
+**Zero install?** Run the same deterministic engine in your browser — **[mcptrustchecker.com/scan](https://mcptrustchecker.com/scan)** — or as a **free public web API → [mcptrustchecker.com/api](https://mcptrustchecker.com/api)**
 
 <sub>· offline · deterministic · no account · OAuth browser login for protected servers · reads the real published npm/PyPI source · <a href="#the-algorithm-the-capability-flow-trust-model">one novel core</a> ·</sub>
 
@@ -154,7 +155,9 @@ mcptrustchecker scan ./tools.json --min-grade B             # exit 1 below a gra
 
 The terminal report is **detailed by default** — every finding prints its full description (**what** the problem is and **why** it matters), the exact location, the offending **evidence**, a **fix**, and its OWASP mapping, grouped most-severe-first. Add `--details` for external references, or `--quiet` for just the grade line.
 
-**No install? Use the free hosted API.** A hosted version of the exact same deterministic engine runs at **[mcptrustchecker.com/api](https://mcptrustchecker.com/api)** — POST a `tools.json` manifest or a published npm/PyPI package name over a single HTTPS request and get the same auditable A–F Trust Score back as JSON. It is **completely free** (grab a key in seconds, no card, no account), and it's the quickest way to try the scanner without installing anything. The CLI and library stay 100% offline — the hosted API is an optional convenience.
+**No install? Scan it in the browser.** The **[online scanner](https://mcptrustchecker.com/scan)** runs this exact engine with no signup and no key. Paste an npm or PyPI package name, a GitHub repository, a live remote endpoint (OAuth sign-in supported), a `tools.json` manifest — or your whole client config (`claude_desktop_config.json`, `.cursor/mcp.json`), and every server in it is graded at once. Each result gets a shareable link and a live Trust Score badge for your README.
+
+**Or call it as an API.** A hosted version of the exact same deterministic engine runs at **[mcptrustchecker.com/api](https://mcptrustchecker.com/api)** — POST a `tools.json` manifest or a published npm/PyPI package name over a single HTTPS request and get the same auditable A–F Trust Score back as JSON. It is **completely free** (grab a key in seconds, no card, no account), and it's the quickest way to try the scanner without installing anything. The CLI and library stay 100% offline — the hosted API is an optional convenience.
 
 **Browse the MCP Trust Registry** — a growing, security-scanned catalog of MCP servers with an A–F Trust Score for each, all computed by this exact engine: **[mcptrustchecker.com/registry](https://mcptrustchecker.com/registry)**.
 
@@ -420,8 +423,8 @@ Connecting to an MCP config can run arbitrary commands. MCP Trust Checker's acqu
 
 - stdio commands are **allow-listed by bare name** (`npx, uvx, python, python3, node, docker, deno`) — a **path-qualified** command (e.g. `/tmp/evil/node`) is refused, closing the basename-spoof bypass.
 - child env is **scrubbed** of execution-hijacking variables (`NODE_OPTIONS`, `LD_PRELOAD`, `DYLD_*`, `PYTHON*`, `()`-functions) — an allow-listed runtime can't be redirected.
-- servers in a client config are **not spawned** unless you pass `--run`; config-derived HTTP targets are **SSRF-guarded** (private/loopback/link-local blocked).
-- HTTP targets are scheme/host-validated; responses are size-capped; all connects are timeout-bounded.
+- servers in a client config are **not spawned** unless you pass `--run`; config-derived HTTP targets are **SSRF-guarded** — private, loopback, link-local, CGNAT, multicast and reserved ranges are blocked, and the host is checked **after DNS resolution**, so a public name that resolves inward (DNS rebinding) is refused too. `--allowed-hosts` overrides the guard for a host you name deliberately.
+- HTTP targets are scheme-validated and host-checked against their resolved addresses; responses are size-capped; all connects are timeout-bounded.
 
 ---
 

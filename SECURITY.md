@@ -22,7 +22,16 @@ Scanning an MCP server is inherently risky — a stdio config can run arbitrary 
 - stdio executables are **allow-listed** (`npx, uvx, python, python3, node, docker, deno`); others are refused without `--allow-any-command`.
 - child processes receive a **minimal environment** (never your full `process.env`), a controlled `cwd`, captured stderr, and aggressive timeouts.
 - servers found in a client config are **not spawned** unless you pass `--run`.
-- HTTP targets are scheme/host-validated before connecting.
+- HTTP targets are scheme-validated, and the host is checked **against its resolved
+  addresses** before connecting — private, loopback, link-local, CGNAT, multicast and
+  reserved ranges are refused, including a public name that resolves inward (DNS
+  rebinding). Every redirect hop and every OAuth discovery/token host is re-checked,
+  because those are chosen by the target server’s own metadata.
+
+- **Repository archives are fetched, never cloned.** `owner/repo` downloads GitHub's
+  own archive over https from pinned hosts (`api.github.com`, `codeload.github.com`),
+  size-capped and unpacked in memory by the same bounded reader used for registry
+  artifacts. No git binary runs, nothing is written to disk, no hook executes.
 
 Even so: **only scan servers you have some reason to run.** Prefer scanning a static `tools.json` manifest when you just want to inspect metadata.
 
@@ -33,8 +42,10 @@ Documented honestly rather than hidden:
 - **`--run` against a live HTTP endpoint follows redirects with re-validation** (each hop's host is re-checked by the SSRF guard). SSE fallback relies on the client's `EventSource`; if it does not honor the injected fetch, prefer `--allowed-hosts` to pin the destination.
 - **A malicious `--run` server that floods stdout with no newline** can grow parent memory (buffered by the MCP SDK). Connect/request timeouts bound latency, not bytes; scan untrusted stdio servers in a constrained environment.
 - **Version-range/`latest` package specs are not evaluated for CVEs** — only a concrete pinned version is matched, to avoid false positives.
+- **The SSRF guard resolves the host, but cannot pin the connection.** A name that fails to resolve is not treated as blocked — the connect would fail anyway, and failing closed would break split-horizon DNS. And because the check runs before the socket opens, a sub-TTL rebind between the lookup and the connect stays theoretically possible; pinning the resolved address needs a custom dispatcher. The lookup itself is time-boxed so a black-holing nameserver cannot stall a scan.
 - Determinism and the SSRF guard are covered by regression tests; the acquisition sandbox is defense-in-depth, not a substitute for isolating truly hostile servers.
 
 ## Supported versions
 
-MCP Trust Checker is pre-1.0. Security fixes land on the latest `0.x` release.
+Security fixes land on the **latest released version**. There is no back-porting to older
+minor versions — upgrade to the newest `1.x` to receive them.

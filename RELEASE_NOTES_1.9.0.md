@@ -1,13 +1,34 @@
-# v1.9.0 — Capability, not malice: `eval` of a runtime value moves to the capability axis
+# v1.9.0 — Major algorithm accuracy upgrade, audited across 30,000+ scanned MCP servers
 
 Methodology `mcptrustchecker-1.9`.
 
 A full **adequacy audit of every grade** over the live 31,300-package corpus —
 checking each band for both *false positives* (benign code graded down) and
 *false negatives* (real threats graded up) — found the scanner's remaining error
-was concentrated in **which axis one rule fed**, not in its detection. Fixing that,
-plus eight precision guards, **moves grades — so the methodology version is bumped
-to `mcptrustchecker-1.9`.**
+was concentrated in **which axis one rule fed**, not in its detection. In short:
+**capability was being scored as malice.**
+
+Correcting that, plus eight precision guards, is the largest accuracy improvement
+since the model was introduced. Across the corpus the sub-B population fell by
+roughly three quarters as misgraded but honest servers returned to their true band,
+while every genuinely malicious package held its grade and no hard gate, weight,
+category cap or grade band changed. Grades move, so **the methodology version is
+bumped to `mcptrustchecker-1.9`** and scores remain comparable only within a version.
+
+## Refined against 30,000+ real MCP servers — and still improving
+
+The model is calibrated on a continuously-scanned corpus of **30,000+ MCP servers**
+published on npm and PyPI. Each revision comes from a **full-population audit** of
+that corpus rather than spot checks: every server in a grade band is re-examined for
+*both* failure directions — false positives (benign code graded down) **and** false
+negatives (real threats graded up) — each proposed change is measured against an
+explicit list of threats it must keep catching, and the whole corpus is re-scanned
+before the version ships. This release is a direct product of that loop.
+
+Notably, those audits move **which axis a rule feeds** far more often than they move
+a weight — the axis assignment is where a scanner actually goes wrong. `1.9.0` changes
+exactly one axis and leaves **every** weight, category cap, grade band and hard gate
+untouched.
 
 ## The headline: `MTC-SRC-010` is now a capability observation
 
@@ -61,6 +82,22 @@ server should be **high-capability and high-trust**.
   silenced real findings **in the server's own code**; only a **repo-root** `tools/`
   is maintainer tooling now. AWS's documented example-key roots are treated as
   placeholders, so honeypot bait is not reported as a live leak.
+
+## Also in this release
+
+- `mcptrustchecker explain <rule>` now states which **axis** a rule feeds, and
+  `mcptrustchecker rules` marks capability rules `[capability]` — matching
+  `docs/rules.md`.
+- **The specification now matches the engine.** `docs/methodology.md` gained the
+  implementation-level source-analysis stage it was missing entirely (the whole
+  `MTC-SRC-*` family, with each rule's axis), an explicit two-axis framing, a
+  description of static tool extraction, and an axis column on the toxic-flow
+  table — plus a correction: a cross-tool trifecta does **not** cap the grade
+  (only the single-tool `MTC-FLOW-001` does). `docs/scoring.md`'s formula now
+  includes the three client-adoption-risk terms (`E_cap` / `E_ver` / `E_cov`)
+  that produce the published score, and documents the full reproducibility
+  payload. `docs/architecture.md` matches the source tree, and `docs/rules.md`
+  is regenerated.
 
 ## Also included — the low-grade precision overhaul (landed after the 1.8.0 tag)
 

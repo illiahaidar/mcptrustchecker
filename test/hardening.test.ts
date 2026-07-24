@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sanitizeEnv, isBlockedHost } from '../src/acquire/live.js';
+import { sanitizeEnv, isBlockedHost, isBlockedHostResolved } from '../src/acquire/live.js';
 import { hasBase64Blob } from '../src/util/text.js';
 import { computeScore } from '../src/scoring/index.js';
 import { scanSurface } from '../src/engine.js';
@@ -35,6 +35,46 @@ test('isBlockedHost catches loopback/private/link-local (SSRF)', () => {
   for (const h of ['example.com', '8.8.8.8', 'mcp.acme.io']) {
     assert.equal(isBlockedHost(h), false, `${h} should be allowed`);
   }
+});
+
+test('isBlockedHost also covers CGNAT, multicast and reserved space', () => {
+  // A scanner reachable from the internet must not be usable to probe a
+  // carrier's CGNAT range or to spray multicast/broadcast traffic.
+  for (const h of ['100.64.0.1', '100.127.255.254', '224.0.0.1', '239.1.1.1', '240.0.0.1', '255.255.255.255']) {
+    assert.equal(isBlockedHost(h), true, `${h} should be blocked`);
+  }
+  // 100.63.x and 100.128.x sit OUTSIDE 100.64/10 and stay routable.
+  for (const h of ['100.63.255.255', '100.128.0.1']) {
+    assert.equal(isBlockedHost(h), false, `${h} should be allowed`);
+  }
+});
+
+test('isBlockedHostResolved catches DNS rebinding that the string check cannot', async () => {
+  // Resolution is injected: asserting against a live third-party domain would
+  // make this suite fail offline and on any resolver with DNS-rebinding
+  // protection — which exists precisely to strip the answer under test.
+  const answers = (...ips: string[]) => async () => ips.map((address) => ({ address }));
+
+  // The whole point: a perfectly PUBLIC name whose A record points at loopback.
+  // The string guard says "fine" — only resolution reveals it.
+  assert.equal(isBlockedHost('rebind.example.com'), false, 'string check cannot see the A record');
+  assert.equal(await isBlockedHostResolved('rebind.example.com', answers('127.0.0.1')), true,
+    'resolved check must block it');
+
+  // A name is only as safe as its WORST answer.
+  assert.equal(await isBlockedHostResolved('multi.example.com', answers('93.184.216.34', '169.254.169.254')), true);
+  assert.equal(await isBlockedHostResolved('good.example.com', answers('93.184.216.34')), false);
+
+  // Literals short-circuit without ever calling the resolver.
+  let called = false;
+  const spy = async () => { called = true; return []; };
+  assert.equal(await isBlockedHostResolved('127.0.0.1', spy), true);
+  assert.equal(called, false, 'an IP literal must not trigger a lookup');
+
+  // An unresolvable name is NOT treated as blocked: the connection fails on its
+  // own, and failing closed here would break split-horizon DNS.
+  const fails = async () => { throw new Error('ENOTFOUND'); };
+  assert.equal(await isBlockedHostResolved('gone.example.com', fails), false);
 });
 
 test('hasBase64Blob rejects hex IDs / git SHAs but accepts real base64', () => {

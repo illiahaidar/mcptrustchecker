@@ -119,6 +119,6 @@ Add a fixture/test alongside any data change so behavior is pinned.
 ```bash
 npm install
 npm run build       # tsc → dist/ (ESM + .d.ts)
-npm test            # node:test (211 tests, incl. a live SDK integration test)
+npm test            # node:test (412 tests, incl. a live SDK integration test)
 npm run typecheck   # tsc --noEmit
 ```

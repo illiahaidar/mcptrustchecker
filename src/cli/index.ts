@@ -69,6 +69,7 @@ ${c.bold('Targets')}
   --scope <scope>                  OAuth scope to request with --login (e.g. mcp:tools)
   --header "Authorization: Bearer …"   static auth header instead of --login (repeatable)
   claude_desktop_config.json       a client config (scans each server)
+  owner/repo                       a GitHub repository — reads its source (also accepts a github.com URL)
   @scope/package                   package scan (--online fetches metadata + reads the published source)
   path/to/server.tgz|.whl|.zip     a packed release artifact — reads the shipped source (offline)
   --command "npx -y my-server"     spawn a local stdio server (sandboxed)
@@ -103,6 +104,7 @@ ${c.bold('Options')}
   --run                            allow spawning servers found in a client config
   --allow-any-command              permit stdio commands outside the allowlist (dangerous)
   --allowed-hosts <a,b>            restrict live HTTP acquisition to these hosts
+  --github-token <t>               lift GitHub's anonymous rate limit (also GITHUB_TOKEN)
   --registry <npm|pypi>            registry for bare package targets (default: npm)
   --details                        include references and full evidence per finding
   --no-pager                       don't page long output (also NO_PAGER / $PAGER)
@@ -143,6 +145,7 @@ async function main(): Promise<number | void> {
         run: { type: 'boolean' },
         'allow-any-command': { type: 'boolean' },
         'allowed-hosts': { type: 'string' },
+        'github-token': { type: 'string' },
         'include-builtins': { type: 'boolean' },
         registry: { type: 'string' },
         token: { type: 'string' },
@@ -226,6 +229,7 @@ async function main(): Promise<number | void> {
     envVars: parseEnvFlags(values.env),
     allowAnyCommand: values['allow-any-command'],
     allowedHosts: values['allowed-hosts'] ? values['allowed-hosts'].split(',').map((h) => h.trim()) : undefined,
+    githubToken: values['github-token'],
     headers: parseHeaderArgs(values.header),
     login: values.login,
     scope: values.scope,

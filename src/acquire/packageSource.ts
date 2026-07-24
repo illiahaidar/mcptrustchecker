@@ -35,9 +35,13 @@ const DOWNLOAD_TIMEOUT_MS = 30_000;
  * a compromised or spoofed metadata response can't point the scanner at an
  * arbitrary server.
  */
-const TARBALL_HOSTS: Record<'npm' | 'pypi', string[]> = {
+export type ArtifactSource = 'npm' | 'pypi' | 'github';
+
+const TARBALL_HOSTS: Record<ArtifactSource, string[]> = {
   npm: ['registry.npmjs.org'],
   pypi: ['files.pythonhosted.org'],
+  // GitHub's tarball endpoint answers on api.github.com and 302s to codeload.
+  github: ['api.github.com', 'codeload.github.com'],
 };
 
 export interface PackageSourceResult {
@@ -67,7 +71,7 @@ export class PackageSourceError extends Error {
 }
 
 /** Validate that an artifact URL is https on the registry's own artifact host. */
-export function assertTrustedTarballUrl(url: string, registry: 'npm' | 'pypi'): URL {
+export function assertTrustedTarballUrl(url: string, registry: ArtifactSource): URL {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -78,7 +82,7 @@ export function assertTrustedTarballUrl(url: string, registry: 'npm' | 'pypi'): 
   if (!TARBALL_HOSTS[registry].includes(parsed.hostname) || isBlockedHost(parsed.hostname)) {
     throw new PackageSourceError(
       'untrusted-redirect',
-      `artifact host "${parsed.hostname}" is not the ${registry} registry's artifact host (${TARBALL_HOSTS[registry].join(', ')}) — refusing to fetch`,
+      `artifact host "${parsed.hostname}" is not a trusted ${registry} artifact host (${TARBALL_HOSTS[registry].join(', ')}) — refusing to fetch`,
     );
   }
   return parsed;
@@ -133,7 +137,7 @@ export function verifyTarballIntegrity(buf: Buffer, expected: string | null | un
  */
 export async function downloadCapped(
   url: URL,
-  registry: 'npm' | 'pypi',
+  registry: ArtifactSource,
   fetchImpl: typeof fetch = fetch,
 ): Promise<Buffer> {
   const ctrl = new AbortController();
@@ -219,7 +223,7 @@ function isSourcePath(path: string): boolean {
  * root-level `package.json`/`tools.json` is found in every real layout. Output
  * is sorted by path so the scan is byte-identical regardless of archive order.
  */
-function classifyEntries(entries: ArchiveEntry[]): { sourceFiles: SourceFile[]; sidecars: Record<string, string> } {
+export function classifyArchiveEntries(entries: ArchiveEntry[]): { sourceFiles: SourceFile[]; sidecars: Record<string, string> } {
   const sourceFiles: SourceFile[] = [];
   const sidecars: Record<string, string> = {};
   for (const e of stripCommonRoot(entries)) {
@@ -232,7 +236,7 @@ function classifyEntries(entries: ArchiveEntry[]): { sourceFiles: SourceFile[]; 
 }
 
 /** The extraction predicate: implementation source + shallow sidecar files. */
-function wantedEntry(path: string): boolean {
+export function wantedSourceEntry(path: string): boolean {
   const parts = path.split('/');
   // Sidecars only at the archive root or one level down (the pre-strip root dir).
   if (parts.length <= 2 && SIDECAR_NAMES.has(parts[parts.length - 1]!)) return true;
@@ -254,8 +258,8 @@ export async function fetchPackageSource(
   const buf = await downloadCapped(url, registry, fetchImpl);
   verifyTarballIntegrity(buf, meta.tarballIntegrity);
   const tarballSha256 = createHash('sha256').update(buf).digest('hex');
-  const entries = extractArchive(buf, url.pathname, wantedEntry, SOURCE_LIMITS);
-  return { ...classifyEntries(entries), tarballSha256 };
+  const entries = extractArchive(buf, url.pathname, wantedSourceEntry, SOURCE_LIMITS);
+  return { ...classifyArchiveEntries(entries), tarballSha256 };
 }
 
 /**
@@ -266,8 +270,8 @@ export async function fetchPackageSource(
  */
 export function surfaceFromArchiveFile(path: string): ServerSurface {
   const buf = readFileSync(path);
-  const entries = extractArchive(buf, path, wantedEntry, SOURCE_LIMITS);
-  const { sourceFiles, sidecars } = classifyEntries(entries);
+  const entries = extractArchive(buf, path, wantedSourceEntry, SOURCE_LIMITS);
+  const { sourceFiles, sidecars } = classifyArchiveEntries(entries);
 
   let manifest: unknown = {};
   for (const name of SIDECAR_MANIFESTS) {

@@ -72,7 +72,7 @@ export function sanitizeEnv(env: Record<string, string>): { clean: Record<string
   return { clean, dropped };
 }
 
-/** True for a private/loopback/link-local IPv4 dotted-quad. */
+/** True for a private/loopback/link-local/otherwise non-routable IPv4 dotted-quad. */
 function isPrivateIpv4(h: string): boolean {
   const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (!m) return false;
@@ -82,7 +82,9 @@ function isPrivateIpv4(h: string): boolean {
     a === 127 || a === 10 || a === 0 ||
     (a === 192 && b === 168) ||
     (a === 172 && b >= 16 && b <= 31) ||
-    (a === 169 && b === 254) // link-local incl. cloud metadata 169.254.169.254
+    (a === 169 && b === 254) || // link-local incl. cloud metadata 169.254.169.254
+    (a === 100 && b >= 64 && b <= 127) || // CGNAT (RFC 6598) — carrier-internal
+    a >= 224 // multicast (224/4) and reserved (240/4), incl. 255.255.255.255
   );
 }
 
@@ -90,9 +92,9 @@ function isPrivateIpv4(h: string): boolean {
  * Block loopback / private / link-local hosts (SSRF guard for config-derived
  * URLs). IPv6 checks apply only to actual IPv6 literals (so DNS names like
  * "fc-api.com" aren't blocked), and IPv4-mapped IPv6 (::ffff:127.0.0.1) is
- * unwrapped. NOTE: this is string-based; a public DNS name that *resolves* to a
- * private IP (DNS rebinding) is not caught here — that is inherent to pre-connect
- * static checks and is documented as out of scope.
+ * unwrapped. This is the STRING-level half of the guard: a public DNS name that
+ * *resolves* to a private IP is not visible here — `isBlockedHostResolved` adds
+ * that half, and callers that accept untrusted targets should use it.
  */
 /**
  * Extract the embedded IPv4 of an IPv4-mapped IPv6 literal. Node's URL parser
@@ -128,8 +130,55 @@ export function isBlockedHost(hostname: string): boolean {
   return false;
 }
 
+/** True when `h` is already an IP literal, so there is nothing to resolve. */
+function isIpLiteral(h: string): boolean {
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(h) || h.includes(':');
+}
+
+/**
+ * The DNS-rebinding half of the SSRF guard: resolve the name and block it when
+ * ANY returned address is non-routable. `isBlockedHost` alone cannot see this —
+ * `evil.example.com` is a perfectly public *string* that can point at 127.0.0.1
+ * or the cloud-metadata address. Every A/AAAA record is checked, because a
+ * multi-record name is only as safe as its worst answer.
+ *
+ * Two honest limits: a resolution FAILURE is not treated as blocked (the
+ * connection would fail on its own, and failing closed would break split-horizon
+ * DNS), and this is a pre-connect check — a sub-TTL rebind between this lookup
+ * and the socket connect remains theoretically possible. Pinning the resolved
+ * address into the connection is the only complete fix and needs a custom
+ * dispatcher; this check plus the per-hop re-validation is the practical guard.
+ */
+export type HostResolver = (host: string) => Promise<Array<{ address: string }>>;
+
+export async function isBlockedHostResolved(hostname: string, resolver?: HostResolver): Promise<boolean> {
+  if (isBlockedHost(hostname)) return true;
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  if (isIpLiteral(h)) return false;
+  try {
+    // The resolver is injectable so this can be tested without reaching the
+    // network: asserting on a live third-party domain would make the unit suite
+    // fail offline and on any resolver with DNS-rebinding protection.
+    const lookup: HostResolver = resolver
+      ?? (async (name) => (await import('node:dns/promises')).lookup(name, { all: true }));
+    // dns.lookup accepts no timeout and no AbortSignal, and this call sits
+    // outside the connect timeout — a hostile authoritative nameserver that
+    // black-holes queries would otherwise stall the scan for the OS resolver's
+    // whole budget (tens of seconds).
+    const addrs = await Promise.race([
+      lookup(h),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('dns timeout')), DNS_GUARD_TIMEOUT_MS).unref?.()),
+    ]);
+    return addrs.some((a) => isBlockedHost(a.address));
+  } catch {
+    return false;
+  }
+}
+
 const REQUEST_OPTS = { timeout: 15_000, maxTotalTimeout: 30_000, resetTimeoutOnProgress: false };
 const CONNECT_TIMEOUT_MS = 20_000;
+/** Budget for the SSRF guard's own DNS lookup (see isBlockedHostResolved). */
+const DNS_GUARD_TIMEOUT_MS = 3_000;
 const MAX_ITEMS = 1000;
 const MAX_PAGES = 50;
 
@@ -363,10 +412,14 @@ export async function acquireHttp(url: string, opts: LiveOptions = {}): Promise<
   if (opts.allowedHosts && !opts.allowedHosts.includes(parsed.hostname)) {
     throw new Error(`Host ${parsed.hostname} is not in the allowed-hosts list.`);
   }
-  if (opts.blockPrivateHosts && isBlockedHost(parsed.hostname)) {
+  // An explicit --allowed-hosts entry is the operator naming this host on
+  // purpose, so it overrides the private-host guard. Without this the guard
+  // rejects the very host you just permitted — and tells you to permit it.
+  const explicitlyAllowed = Boolean(opts.allowedHosts?.includes(parsed.hostname));
+  if (opts.blockPrivateHosts && !explicitlyAllowed && (await isBlockedHostResolved(parsed.hostname))) {
     throw new Error(
       `Refusing to connect to private/loopback host "${parsed.hostname}" from an untrusted config (SSRF guard). ` +
-        `Use --allowed-hosts to permit specific hosts.`,
+        `Pass --allowed-hosts ${parsed.hostname} to scan it deliberately.`,
     );
   }
 
@@ -396,7 +449,11 @@ export async function acquireHttp(url: string, opts: LiveOptions = {}): Promise<
         throw new Error(`Blocked request to non-http scheme "${cur.protocol}".`);
       if (opts.allowedHosts && !opts.allowedHosts.includes(cur.hostname))
         throw new Error(`Blocked request to disallowed host "${cur.hostname}".`);
-      if (opts.blockPrivateHosts && isBlockedHost(cur.hostname))
+      // Resolved, not just string-matched: an OAuth authorization-server host is
+      // chosen by the *target server's* metadata, so it is exactly the place a
+      // rebinding name would be planted.
+      if (opts.blockPrivateHosts && !opts.allowedHosts?.includes(cur.hostname)
+          && (await isBlockedHostResolved(cur.hostname)))
         throw new Error(`SSRF: blocked request to private/loopback host "${cur.hostname}".`);
 
       // Credentials (the SDK-injected OAuth bearer in init.headers, and any

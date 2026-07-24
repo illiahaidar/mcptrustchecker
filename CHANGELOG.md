@@ -5,6 +5,81 @@ deterministic: the **methodology version** is bumped whenever a change could
 move a score, so a grade is always reproducible against the version that
 produced it.
 
+## 1.10.0 — methodology `mcptrustchecker-1.9` (unchanged)
+
+A new scan target — **a GitHub repository** — plus security hardening of the
+live-endpoint SSRF guard. **No scoring change**: no weight, rule, gate or band
+moved, so the methodology version stays `mcptrustchecker-1.9` and a package that
+scored A yesterday scores A today.
+
+### Added — scan a GitHub repository directly
+
+```bash
+mcptrustchecker scan upstash/context7
+mcptrustchecker scan https://github.com/upstash/context7
+mcptrustchecker scan owner/repo@v1.2.3
+```
+
+- Plenty of MCP servers are never published to a registry: they are a repo you
+  are told to clone, or a pre-release you want to read before it ships. Those had
+  no scannable target — a bare `owner/repo` looked like a missing file, and a
+  github.com URL was treated as a live MCP endpoint and failed on content type.
+- Accepts `owner/repo`, `owner/repo@ref`, https/ssh github.com URLs, `.git`
+  suffixes and `/tree/<ref>` links. Every other target shape is untouched: a
+  scoped package, a path, and a live URL still take their own branch, which is
+  pinned by a regression test.
+- **Nothing is cloned, written to disk or executed.** The repository archive is
+  fetched over https from GitHub's pinned hosts and unpacked **in memory**
+  through the same bounded reader that handles npm/PyPI artifacts — same size
+  cap, same redirect re-validation, same zip-slip-safe entry paths, same
+  unpacked-bytes ceiling.
+- A repository is **not** a released artifact and the report says so: the surface
+  is marked `repo`, verification is the `repo` tier (public, readable source —
+  never `source` or `vendor`, which require publish provenance), and the archive's
+  own SHA-256 is recorded, because "the default branch" is only reproducible
+  against the bytes actually read.
+- `GITHUB_TOKEN` (or `--github-token`) lifts GitHub's anonymous rate limit. It is
+  sent to `api.github.com` only and never survives a redirect.
+
+### Fixed — DNS rebinding could bypass the private-host guard
+
+- `isBlockedHost` compares the hostname as a **string**, so a perfectly public
+  name whose `A` record points at `127.0.0.1` or `169.254.169.254` passed it.
+  New `isBlockedHostResolved()` resolves the name and blocks it when **any**
+  returned address is non-routable — a multi-record name is only as safe as its
+  worst answer. It is applied at the `acquireHttp` entry **and on every
+  `guardedFetch` hop**, which matters because OAuth discovery, registration and
+  token hosts are chosen by the *target server's own metadata*.
+- Documented limits, deliberately: an unresolvable name is **not** treated as
+  blocked (the connection fails on its own; failing closed would break
+  split-horizon DNS), and a sub-TTL rebind between the lookup and the socket
+  connect remains theoretically possible — pinning the resolved address into the
+  connection is the only complete fix and needs a custom dispatcher.
+
+### Fixed — `--allowed-hosts` now overrides the private-host guard
+
+- Naming a host with `--allowed-hosts` is the operator's informed consent, but the
+  guard ran independently of it and refused the host anyway — while the error told
+  you to pass the flag you had just passed. It now takes precedence, at the entry
+  point and on every redirect hop. This matters more after the widening below:
+  `100.64/10` is Tailscale's range, so tailnet-hosted servers were newly affected.
+
+### Fixed — the guard's own DNS lookup is time-boxed
+
+- `dns.lookup` accepts no timeout and no `AbortSignal`, and the entry-point check
+  runs outside the connect timeout, so a nameserver that black-holes queries could
+  stall a scan for the OS resolver's whole budget. The lookup now has its own 3s
+  budget; the resolver is also injectable, so the regression tests assert on it
+  without touching the network.
+
+### Fixed — private-range coverage widened
+
+- `isBlockedHost` now also blocks **CGNAT** (`100.64/10`, RFC 6598), **multicast**
+  (`224/4`) and **reserved** space (`240/4`, incl. `255.255.255.255`). A scanner
+  reachable from the internet must not be usable to probe a carrier's internal
+  range or to spray multicast traffic. `100.63.x` and `100.128.x` sit outside the
+  range and stay routable.
+
 ## 1.9.0 — methodology `mcptrustchecker-1.9`
 
 A full **adequacy audit of every grade** over the live 31,300-package corpus —
@@ -312,7 +387,10 @@ what such a server is built to do. The fix sharpens the line between "powerful"
   resolves to the vulnerable ranges, so `npm audit fix` could not resolve them.
   The scanner only ever imports the SDK's *client* modules, so the Hono server
   adapter was never on a reachable code path — but a security tool should not
-  ship a tree that its own users' `npm audit` flags. `npm audit` is now clean.
+  ship a tree that its own users' `npm audit` flags. `npm audit` is clean **in this repository**. Note the `overrides` block does not
+  apply when the package is installed as a dependency: a consumer may still see an
+  advisory reached through `@modelcontextprotocol/sdk`. The affected adapter is not
+  on any code path this package imports.
 
 ### Notes
 

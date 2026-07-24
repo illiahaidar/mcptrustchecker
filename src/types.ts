@@ -20,7 +20,8 @@ export type SurfaceSourceKind =
   | 'http' // connected to a Streamable-HTTP / SSE endpoint
   | 'manifest' // read a pre-generated tools.json (offline)
   | 'client-config' // extracted from a client config (claude_desktop_config.json, etc.)
-  | 'package'; // resolved package metadata only (no live surface)
+  | 'package' // resolved package metadata only (no live surface)
+  | 'repo'; // read from a repository archive (source, but not a released artifact)
 
 export interface SurfaceSource {
   kind: SurfaceSourceKind;

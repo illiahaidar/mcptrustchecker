@@ -31,6 +31,7 @@ export { resolveTargets, type ResolveOptions, type ResolvedTarget } from './acqu
 export { surfaceFromManifest } from './acquire/manifest.js';
 export { surfaceFromPackageDir, readSourceFiles } from './acquire/source.js';
 export { acquireStdio, acquireHttp, ALLOWED_COMMANDS, type StdioSpec, type LiveOptions } from './acquire/live.js';
+export { parseRepoTarget, surfaceFromGithubRepo, repoLabel, repoHomeUrl, type RepoRef } from './acquire/repo.js';
 export { parseClientConfig, isClientConfig, packageFromStdio } from './acquire/clientConfig.js';
 export { fetchNpmMeta, fetchPypiMeta } from './acquire/npm.js';
 

@@ -8,6 +8,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import type { PackageMeta, ServerSurface } from '../types.js';
 import { surfaceFromManifest } from './manifest.js';
+import { parseRepoTarget, repoLabel, surfaceFromGithubRepo } from './repo.js';
 import { surfaceFromPackageDir } from './source.js';
 import { acquireHttp, acquireStdio, ALLOWED_COMMANDS, type LiveOptions } from './live.js';
 import {
@@ -33,6 +34,8 @@ export interface ResolveOptions extends LiveOptions {
   envVars?: Record<string, string>;
   /** With `--online`: skip downloading the published artifact (metadata checks only). */
   metadataOnly?: boolean;
+  /** Lifts GitHub's anonymous archive rate limit; falls back to GITHUB_TOKEN. */
+  githubToken?: string;
 }
 
 export interface ResolvedTarget {
@@ -178,6 +181,25 @@ export async function resolveTargets(target: string | undefined, opts: ResolveOp
     const surface = await acquireStdio({ command: opts.command, args: opts.args, env: opts.envVars }, opts);
     return [{ label: surface.id, surface }];
   }
+  // A repository target is checked before the URL branch: a github.com link is
+  // source to read, not an MCP endpoint to connect to (it used to fail on
+  // content-type). Bare `owner/repo` is checked here too, where it used to look
+  // like a missing file.
+  if (target && !opts.url) {
+    const repoRef = parseRepoTarget(target);
+    if (repoRef) {
+      const surface = await surfaceFromGithubRepo(repoRef, { token: opts.githubToken });
+      if ((!surface.tools || surface.tools.length === 0) && surface.sourceFiles?.length) {
+        const extracted = extractToolsFromSource(surface.sourceFiles);
+        if (extracted.extracted) {
+          surface.tools = extracted.tools;
+          surface.toolProvenance = 'static';
+        }
+      }
+      return [{ label: repoLabel(repoRef), surface }];
+    }
+  }
+
   if (opts.url || (target && HTTP_RE.test(target))) {
     const url = opts.url ?? target!;
     const surface = await acquireHttp(url, opts);

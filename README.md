@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-3c873a.svg)](package.json)
-[![Methodology](https://img.shields.io/badge/methodology-mcptrustchecker--1.8-6f42c1.svg)](docs/methodology.md)
+[![Methodology](https://img.shields.io/badge/methodology-mcptrustchecker--1.9-6f42c1.svg)](docs/methodology.md)
 [![Tests](https://img.shields.io/badge/tests-304%20passing-brightgreen.svg)](test)
 [![Rules](https://img.shields.io/badge/rules-78-orange.svg)](docs/rules.md)
 [![No account](https://img.shields.io/badge/account-not%20required-brightgreen.svg)](#why-this-is-different)
@@ -36,7 +36,9 @@ npx mcptrustchecker                # 🔍 scan every MCP server you already have
 
 ## What makes the algorithm unique
 
-The **Capability-Flow Trust Model** (methodology `mcptrustchecker-1.8`) is an **original algorithm designed from scratch for this project** by [Illia Haidar](https://github.com/illiahaidar) — it is not a wrapper around, or derivative of, any existing scanner or methodology. It is named, versioned, fully specified in [docs/methodology.md](docs/methodology.md), and citable via [CITATION.cff](CITATION.cff).
+The **Capability-Flow Trust Model** (methodology `mcptrustchecker-1.9`) is an **original algorithm designed from scratch for this project** by [Illia Haidar](https://github.com/illiahaidar) — it is not a wrapper around, or derivative of, any existing scanner or methodology. It is named, versioned, fully specified in [docs/methodology.md](docs/methodology.md), and citable via [CITATION.cff](CITATION.cff).
+
+**It is refined against 30,000+ real MCP servers — and still improving.** The model is not theoretical: it is calibrated on a continuously-scanned corpus of **30,000+ MCP servers** published on npm and PyPI. Each revision comes from a **full-population audit** of that corpus — every server in a grade band re-examined for *both* false positives (benign code graded down) and false negatives (real threats graded up), each change measured against the threats it must keep catching, and the whole corpus re-scanned before the version ships. That loop produced `mcptrustchecker-1.9`, which moved "evaluating a runtime value" off the threat axis after the data showed it was charging capability as malice. The corpus keeps growing and the audits keep running, so the methodology is expected to keep tightening — which is why every score carries the version that produced it.
 
 MCP Trust Checker scores an MCP server the way an **attacker** reasons about it — not as a bag of regex hits, but as a **Capability-Flow Trust Model**. Every tool is reduced to the roles it can actually play — *untrusted-input ingress*, *sensitive-data source*, *external / exec sink* — derived from behavior, **never** from the server's own (attacker-controllable) annotations. Those roles are wired into a **cross-tool toxic-flow graph** that hunts the *lethal trifecta*: the moment untrusted content, private data, and an exfiltration path co-exist in one agent session — whether inside a single tool or composed across several tools plus the client's built-ins. That is the exact shape behind real-world MCP data-exfiltration exploits, and MCP Trust Checker proves the primitive exists **statically**, with an honest confidence split so a single-tool completion reads `confirmed` and a cross-tool composition reads `strong` — never overclaiming.
 
@@ -61,7 +63,7 @@ An MCP server hands an AI assistant a set of *tools*. Those tool descriptions ar
 ```
    ╭────────────╮
    │  GRADE  D  │   Trust Score 69/100
-   ╰────────────╯   methodology mcptrustchecker-1.8
+   ╰────────────╯   methodology mcptrustchecker-1.9
 
 Toxic flows (untrusted-input → sensitive-source → external-sink)
   [critical] The three trifecta roles are co-present across tools;
@@ -325,7 +327,7 @@ const report  = await scanSurface(surface);
 
 report.score.grade;              // 'A' … 'F'
 report.score.score;              // 0 … 100
-report.score.methodologyVersion; // 'mcptrustchecker-1.8'  ← pin & display this
+report.score.methodologyVersion; // 'mcptrustchecker-1.9'  ← pin & display this
 report.toxicFlows;               // enumerated exfiltration primitives
 renderBadge(report);             // shields.io endpoint JSON for a live trust badge
 ```

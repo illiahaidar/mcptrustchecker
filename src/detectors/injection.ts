@@ -54,7 +54,11 @@ const SELF_CREDENTIAL_TOOL = /ssh|known_hosts|credential|config|keychain|dotfile
 const MODEL_RUN_DIRECTIVE = /before (answer|respond)|you (must|should) (run|execute)|execute this (first|command)|run this (first|before|command)|silently (run|execute)|then run/i;
 // A tool whose own function is running/deleting on a shell — a "rm -rf" in its
 // description is documenting itself, not injecting.
-const SHELL_TOOL_NAME = /command|shell|\bexec|terminal|bash|\brun_|process|delete|\brm\b|uninstall|cleanup/i;
+// Destructive verbs are matched with an UNDERSCORE-aware boundary ([_\W]), so an
+// MCP tool named `adb_rm` / `file_del` / `force_unlink` is recognised as a
+// delete tool documenting itself — while `transform`/`confirm`/`alarm` (rm inside
+// a word, preceded by a letter) never match.
+const SHELL_TOOL_NAME = /command|shell|\bexec|terminal|bash|\brun_|process|delete|(?:^|[_\W])(?:rm|rmdir|del|unlink)(?:[_\W]|$)|uninstall|cleanup/i;
 
 export const injectionDetector: Detector = {
   id: 'injection',

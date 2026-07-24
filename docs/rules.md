@@ -1,6 +1,6 @@
 # Rule catalogue
 
-Every rule MCP Trust Checker can emit (78 total). Run `mcptrustchecker rules` for the same list, or `mcptrustchecker explain <id>` for one rule.
+Every rule MCP Trust Checker can emit (81 total). Run `mcptrustchecker rules` for the same list, or `mcptrustchecker explain <id>` for one rule.
 
 Rules marked **[capability]** describe blast-radius and raise the Capability level; they do **not** lower the Trust grade. All others are trust threats.
 
@@ -40,6 +40,9 @@ Rules marked **[capability]** describe blast-radius and raise the Capability lev
 | `MTC-INJ-SHADOW-3` | high | Tool-selection hijack (suppress other tools) | "Do not use / ignore the other tools"-style text that suppresses all sibling tools in model selection. |
 | `MTC-INJ-SHADOW-4` | low | Assertive tool self-preference | Comparative self-promotion ("only correct tool", "use this instead of the X tool") — common in legit docs; a confidence-axis nudge that escalates only with secrecy/override. |
 | `MTC-SRC-004` | high | Obfuscated / encoded payload in server code | Decode-and-execute of an encoded blob, or \x-escaped / fromCharCode runs hiding logic from review. |
+| `MTC-SRC-009` | medium | Untrusted input concatenated into a command sink | A shell/process command assembled by concatenation or interpolation — the command-injection flow, not mere presence of a sink. |
+| `MTC-SRC-010` | high | Dynamic evaluation of a non-literal value | eval / new Function applied to a variable or expression rather than a fixed literal — a direct RCE primitive. **[capability]** |
+| `MTC-SRC-011` | high | Assembled command execution and dynamic evaluation in the same server | Runtime code both builds shell commands from values and evaluates values as code — two execution primitives in one server. |
 
 ## Exfiltration & toxic flow
 
@@ -57,9 +60,6 @@ Rules marked **[capability]** describe blast-radius and raise the Capability lev
 | `MTC-SRC-003` | medium | Hardcoded egress to an external endpoint | A fixed outbound http(s) call to a non-local host in the code — an exfiltration/telemetry channel. **[capability]** |
 | `MTC-SRC-006` | high | Credential-path read or environment dump in code | Reads ~/.ssh / .aws/credentials / .netrc, or serializes the whole environment — a sensitive-data source. **[capability]** |
 | `MTC-SRC-008` | high | Hardcoded credential value in server code | A live-looking secret (AWS/GitHub/Slack/JWT/PEM…) embedded in the source, shipped to every install. |
-| `MTC-SRC-009` | medium | Untrusted input concatenated into a command sink | A shell/process command assembled by concatenation or interpolation — the command-injection flow, not mere presence of a sink. |
-| `MTC-SRC-010` | high | Dynamic evaluation of a non-literal value | eval / new Function applied to a variable or expression rather than a fixed literal — a direct RCE primitive. |
-| `MTC-SRC-011` | high | Assembled command execution and dynamic evaluation in the same server | Runtime code both builds shell commands from values and evaluates values as code — two execution primitives in one server. |
 
 ## Capability & permissions
 
@@ -89,7 +89,7 @@ Rules marked **[capability]** describe blast-radius and raise the Capability lev
 | `MTC-SUP-006` | medium | Combosquat | Protected name plus a decorative suffix (-js, -server, …). |
 | `MTC-SUP-010` | high | Install-time scripts | Package runs pre/post/install scripts — the dominant malware vector. |
 | `MTC-SUP-011` | low | No source repository | Published artifact cannot be compared against reviewable source. |
-| `MTC-SUP-013` | info | Package not version-pinned | Installed with @latest/floating spec — the rug-pull enabler; pinning is the recommended control. Advice-only (any scan-by-name is unpinned); escalates to medium only when install scripts make silent drift dangerous. |
+| `MTC-SUP-013` | low | Package not version-pinned | Installed with @latest/floating spec — the rug-pull enabler; pinning is the recommended control. |
 | `MTC-SUP-014` | medium | Dependency squat / advisory match | A declared dependency resembles a protected package or matches a known advisory by name. |
 | `MTC-SUP-015` | medium | Pinned version is not published in the registry | An exact pinned version is not listed by the registry; the scanner refuses to substitute latest and flags the gap. |
 | `MTC-NET-001` | high | Known-vulnerable version | Installed version is in a known-CVE range. |
@@ -114,5 +114,5 @@ Rules marked **[capability]** describe blast-radius and raise the Capability lev
 | Rule | Severity | Title | What it means |
 | --- | --- | --- | --- |
 | `MTC-CAP-005` | low | Mutating tool without destructiveHint | A tool that mutates/egresses declares no destructiveHint, so some clients may not prompt. **[capability]** |
-| `MTC-SUP-012` | info | No license | Package declares no license — a legal/reuse concern, not a security defect. Recorded, never scored. |
+| `MTC-SUP-012` | info | No license | Package declares no license — a legal/reuse concern, recorded but never scored. |
 | `MTC-META-001` | info | Empty surface — nothing to analyze | No tools/prompts/resources found; an empty surface is not a clean bill of health. |

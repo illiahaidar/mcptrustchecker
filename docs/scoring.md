@@ -9,7 +9,32 @@ MCP Trust Checker scores two independent things, because "powerful" and "malicio
 
 The rules that count as *capability* (and therefore never lower the grade) are listed in [`src/scoring/model.ts`](../src/scoring/model.ts) (`CAPABILITY_RULES`). Capability findings are still shown in the report — under "Capability observations" — and raise the capability level via [`src/scoring/capability.ts`](../src/scoring/capability.ts). Keeping the axes separate is what stops a legitimate-but-powerful server (a scraper, a browser driver, a filesystem tool) from collapsing to "F". Popularity is never an input.
 
-**Presence vs. flow (why a Google/Unity connector is not "F").** The implementation scanner distinguishes *having* a dangerous sink from *feeding untrusted input into it*. Merely calling `child_process`, `exec`, `eval`, a hardcoded API endpoint, or reading a cloud CLI's credential store (`MTC-SRC-001/002/003/005/006`) is **capability** — it is what a browser driver, a cloud connector, or an official platform SDK is built to do, so it raises the capability level and never the grade. What *is* scored as a threat is the visible injection **flow**: a command assembled by concatenation or template interpolation (`MTC-SRC-009`), or `eval`/`new Function` applied to a runtime value rather than a fixed literal (`MTC-SRC-010`). That is the line between "powerful" and "negligent", drawn from the code itself and no farther than the code can prove.
+**Presence vs. flow (why a Google/Unity connector is not "F").** The implementation scanner distinguishes *having* a dangerous sink from *feeding untrusted input into it*. Merely calling `child_process`, `exec`, `eval`, a hardcoded API endpoint, reading a cloud CLI's credential store, or evaluating a runtime value (`MTC-SRC-001/002/003/005/006/010`) is **capability** — it is what a browser driver, a cloud connector, a template engine or an official platform SDK is built to do, so it raises the capability level and never the grade.
+
+What *is* scored as a threat is the shape that indicates malice or negligence rather than power:
+
+- a command **assembled** from concatenated/interpolated values (`MTC-SRC-009`),
+- the **co-presence of both execution primitives** — an assembled command *and* dynamic evaluation in the same server (`MTC-SRC-011`),
+- a **decode-then-execute** dropper (`MTC-SRC-004`), unsafe deserialization (`MTC-SRC-007`), and a live embedded credential (`MTC-SRC-008`).
+
+`MTC-SRC-010` (`eval`/`new Function` on a runtime value) moved to the capability axis in `mcptrustchecker-1.9`: it is the same primitive as `MTC-SRC-001`, which was always capability-only, so scoring it charged one capability twice and pushed honest code-runners below B. Untrusted input actually *reaching* such a sink is the toxic-flow layer's job, not a lexical one. That is the line between "powerful" and "negligent", drawn from the code itself and no farther than the code can prove.
+
+## Calibrated on 30,000+ scanned servers
+
+The constants below are not guesses. They are validated against a continuously-scanned
+corpus of **30,000+ real MCP servers** on npm and PyPI, and every methodology revision
+is driven by a **full-population audit** of that corpus: each grade band is re-examined
+for *both* false positives (benign code graded down) and false negatives (real threats
+graded up), each proposed change is measured against the threats it must keep catching,
+and the whole corpus is re-scanned before the version ships.
+
+In practice this has moved **which axis a rule feeds** far more often than it has moved
+a weight — the axis assignment is where a scanner actually goes wrong. `mcptrustchecker-1.9`
+reclassified `MTC-SRC-010` (evaluating a runtime value) from threat to capability for
+exactly that reason, while leaving every weight, cap, gate and band untouched. The
+corpus keeps growing and the audits keep running, so the model is expected to keep
+tightening; the methodology version stamped on every report is what keeps historical
+grades interpretable.
 
 ## Trust grade: auditable by construction
 
@@ -20,12 +45,24 @@ The model is defined in one place — [`src/scoring/model.ts`](../src/scoring/mo
 ## The formula
 
 ```
-TrustScore = clamp( 100 − Σ_categories min(CategoryCap, Σ_findings penalty_i), 0, 100 )
+threatScore = clamp( 100 − Σ_categories min(CategoryCap, Σ_findings penalty_i), 0, 100 )
 
-penalty_i  = severity_weight × confidence_multiplier × diminishing_factor(rank_within_rule)
+penalty_i   = severity_weight × confidence_multiplier × diminishing_factor(rank_within_rule)
+
+score       = clamp( round( threatScore − E_cap − E_ver − E_cov ), 0, 100 )
 ```
 
 Higher score = safer. A clean surface scores **100 / A**.
+
+**The three client-adoption-risk terms.** `threatScore` answers *"is there any sign this server is malicious or negligent?"*. The published score answers the question a user actually has — *"how risky is it for me to adopt this?"* — so three small, **subtract-only, itemized** terms evolve one into the other. Capability findings are excluded from the threat set *before* any of this, so none of these terms is a back-door way of grading capability as malice:
+
+| Term | What it prices | Values |
+| --- | --- | ---: |
+| `E_cap` | blast radius if the model driving the server is manipulated | minimal 0 · moderate 3 · high 6 · critical 10 |
+| `E_ver` | how verifiable the artifact's origin is | vendor 0 · provenance 0 · public repo 1 · unlocatable 5 |
+| `E_cov` | how much of the target the scan could actually read | live/source 0 · manifest 4 · metadata 8 · empty 10 |
+
+Each term is ≥ 0, so the client score can **never rise above** `threatScore`; each appears as its own line in `score.vector` (with `kind: "client"`), and the pure `threatScore` is preserved on the report. `E_ver` is skipped entirely when verification is `unknown` (an offline scan cannot check provenance — it is never guessed), and a missing repository is discounted more lightly when the shipped source was nonetheless fully read.
 
 ### Why not a weighted average?
 
@@ -96,11 +133,14 @@ All gates except the any-critical floor fire only on `confirmed` findings, so a 
 
 Every report ships everything needed to recompute the score:
 
-1. `score.methodologyVersion` (`mcptrustchecker-1.0`).
-2. `score.vector` — for each scored finding: `{ ruleId, category, severity, confidence, rawWeight, confidenceMult, diminishingFactor, appliedPenalty }`.
-3. `score.categorySubtotals` — points subtracted per category (post-cap).
-4. `score.gatesFired` — the exact gates that applied, in words.
-5. `surfaceDigest` — SHA-256 of the canonical surface the score was computed over.
+1. `score.methodologyVersion` (`mcptrustchecker-1.9`).
+2. `score.threatScore` — the pure threat number, preserved before the client terms.
+3. `score.vector` — one line per step, of two kinds:
+   - `{ kind: "threat", ruleId, category, severity, confidence, rawWeight, confidenceMult, diminishingFactor, appliedPenalty }`
+   - `{ kind: "client", term, level, label, appliedPenalty }` — one each for `capability-exposure`, `verification-discount`, `coverage-honesty`
+4. `score.categorySubtotals` — points subtracted per category (post-cap).
+5. `score.gatesFired` — the exact gates that applied, in words; `score.gateCap` / `score.band` show the cap and the pre-gate band separately.
+6. `surfaceDigest` — SHA-256 of the canonical surface the score was computed over.
 
 **Same methodology version + same target ⇒ byte-identical `score` and `vector`.** This is verified by tests (`test/scoring.test.ts`, `test/engine.test.ts`). Bump `METHODOLOGY_VERSION` whenever a change could move a score, so historical scores stay comparable — a marketplace can pin and display the version next to a grade.
 

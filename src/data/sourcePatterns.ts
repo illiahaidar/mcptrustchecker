@@ -39,13 +39,30 @@ export const SOURCE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.mts', 
  * Install-time hooks are NOT excused by this: a malicious `postinstall` is
  * caught by MTC-SUP-010 regardless of which directory the script lives in.
  */
-const NON_RUNTIME_DIR = /(^|\/)(?:tests?|__tests__|spec|specs|benchmarks?|bench|examples?|samples?|fixtures?|__mocks__|mocks?|e2e|docs?|website|scripts|tools|\.github)(\/|$)/i;
-const NON_RUNTIME_FILE = /(^|\/)[^/]*(?:\.test|\.spec|\.bench|_test|_spec)\.[a-z]+$/i;
+// NOTE: `tools` is NOT here — MCP servers implement their RUNTIME request handlers
+// in src/tools, dist/tools, build/**/tools, dist/mcp/tools, lib/**/tools ("tools"
+// is the MCP-native name for a handler), so a bare `tools` token at any depth
+// mislabelled the server's OWN code as dev tooling and silenced/downgraded real
+// threats there. Repo-root `tools/` (genuine maintainer tooling) is still excused
+// via NON_RUNTIME_ROOT_TOOLING below. `scripts` stays at any depth (nested
+// src/scripts, dist/scripts are far more often real maintenance code than handlers).
+const NON_RUNTIME_DIR = /(^|\/)(?:tests?|__tests__|spec|specs|benchmarks?|bench|examples?|samples?|fixtures?|__mocks__|mocks?|e2e|docs?|website|scripts|vendor|third[_-]party|bundled|public|\.cache|\.yarn|\.github)(\/|$)/i;
+// Repo-root maintainer tooling — `tools/` and `scripts/` at the package root are
+// dev tooling, but the same names NESTED under src/dist/build/lib are compiled
+// runtime. Paths are package/-prefix-stripped, so `^` anchors at the repo root.
+const NON_RUNTIME_ROOT_TOOLING = /^tools\//i;
+// Test/spec files at any depth, PLUS root-anchored maintainer tooling scripts
+// (postinstall/build/setup and *.config.*) — a bundler config or an install
+// script is packaging tooling, not the server's request-handling runtime.
+// `*.min.js` is a single-file vendored/generated bundle (frontend/build output),
+// never hand-written server runtime — a threat pattern that fires only inside a
+// minified bundle is reading copied third-party glue, not the server's code.
+const NON_RUNTIME_FILE = /(^|\/)[^/]*(?:\.test|\.spec|\.bench|_test|_spec)\.[a-z]+$|(^|\/)(?:pre|post)?install\.[cm]?[jt]s$|(^|\/)(?:build|setup|prepublish|prepare|gulpfile|rollup|webpack|esbuild|vite|tsup|vitest|jest)\.[cm]?[jt]s$|(^|\/)[^/]*\.config\.[cm]?[jt]s$|(^|\/)[^/]*\.min\.js$/i;
 
 /** True when a path is packaging/dev tooling rather than the server itself. */
 export function isNonRuntimePath(path: string): boolean {
   const p = String(path ?? '');
-  return NON_RUNTIME_DIR.test(p) || NON_RUNTIME_FILE.test(p);
+  return NON_RUNTIME_DIR.test(p) || NON_RUNTIME_ROOT_TOOLING.test(p) || NON_RUNTIME_FILE.test(p);
 }
 
 export const SOURCE_PATTERNS: SourcePattern[] = [
@@ -54,7 +71,10 @@ export const SOURCE_PATTERNS: SourcePattern[] = [
     id: 'MTC-SRC-001',
     title: 'Dynamic code execution in server code',
     lang: 'any',
-    pattern: /\beval\s*\(|\bnew\s+Function\s*\(|\bFunction\s*\(\s*['"`]|vm\.(?:runIn\w+|compileFunction)\s*\(|\bexec\s*\(\s*compile\s*\(/,
+    // `(?<![.$\w'"`])` before eval rejects `.eval(`, `$$eval(`, `x.eval(` and
+    // string/regex-literal `"eval("` — the bundled/vendored + Playwright `$eval`
+    // class — while a genuine bare `eval(` / `new Function(` still matches.
+    pattern: /(?<![.$\w'"`])eval\s*\(|\bnew\s+Function\s*\(|\bFunction\s*\(\s*['"`]|vm\.(?:runIn\w+|compileFunction)\s*\(|\bexec\s*\(\s*compile\s*\(/,
     severity: 'high',
     confidence: 'strong',
     category: 'permissions',
@@ -69,7 +89,12 @@ export const SOURCE_PATTERNS: SourcePattern[] = [
     // (RegExp.prototype.exec) and `pool.spawn(` are everyday, harmless calls.
     // Real process spawning is still caught: the `child_process` module token
     // matches the import, and Python's builtins are dot-free by nature.
-    pattern: /child_process|\bexecSync\s*\(|(?<!\.)\bexec\s*\(|(?<!\.)\bspawn(?:Sync)?\s*\(|\bos\.system\s*\(|\bos\.popen\s*\(|subprocess\.(?:run|call|Popen|check_output)\s*\(|\bshell\s*[:=]\s*True/,
+    // Receiver-guarded: `(?<![.$\w])` rejects `db.exec(`, `$exec(` (get-intrinsic's
+    // bundled regex shim — the dominant false positive) and `fooExec(`; `(?!\s*\/)`
+    // rejects a regex-literal first argument (`$exec(/^%?…%?$/)`). Real process
+    // spawning still matches via the `child_process` module token or the bare,
+    // properly-bounded callees / Python builtins.
+    pattern: /child_process|(?<![.$\w])execSync\s*\((?!\s*\/)|(?<![.$\w])exec\s*\((?!\s*\/)|(?<![.$\w])spawn(?:Sync)?\s*\((?!\s*\/)|\bos\.system\s*\(|\bos\.popen\s*\(|subprocess\.(?:run|call|Popen|check_output)\s*\(|\bshell\s*[:=]\s*True/,
     severity: 'high',
     confidence: 'strong',
     category: 'permissions',
@@ -92,7 +117,20 @@ export const SOURCE_PATTERNS: SourcePattern[] = [
     id: 'MTC-SRC-004',
     title: 'Obfuscated / encoded payload in server code',
     lang: 'any',
-    pattern: /(?:eval|exec|new Function|Function)\s*\(\s*(?:atob|Buffer\.from|base64\.b64decode)\b|atob\s*\([^)]*\)\s*\)?\s*(?:\)|;)?\s*.{0,20}\beval|Buffer\.from\s*\([^)]*,\s*['"`]base64['"`]\s*\)[^;]{0,40}(?:eval|Function|exec)|base64\.b64decode\s*\([^)]*\)[^;]{0,40}(?:exec|eval)|(?:\\x[0-9a-fA-F]{2}){8,}|String\.fromCharCode\s*\((?:\s*\d+\s*,){8,}/,
+    // ONLY the decode→execute shape: an encoded blob that is decoded AND fed to a
+    // code-exec sink. The two former standalone data-literal alternations —
+    // `(?:\x..){8,}` and `String.fromCharCode((\d+,){8,}` — were DELETED: they
+    // matched ANY run of hex-escapes / char-codes with no decoder and no sink,
+    // i.e. plain DATA (escaped-space indentation, ASCII/base62 alphabets, CP437 &
+    // Unicode codepage tables, binary protocol fixtures). A precision audit found
+    // 100% of their C/D/F firings were false positives and zero true positives —
+    // a bare byte literal is not an executed payload. The four decode+exec
+    // alternations below (which anchor on a decoder AND an exec sink) fully cover
+    // the rule's own intent and keep every genuine dropper (e.g. eval(atob(…))).
+    // Every exec sink is call-anchored (`\b<verb>\s*\(`) so a bare word like
+    // `evaluate`/`execute`/`functional` in a decoded-blob's tail cannot satisfy the
+    // sink leg — the first alternation already requires the call; alts 2-4 now do too.
+    pattern: /(?:eval|exec|new Function|Function)\s*\(\s*(?:atob|Buffer\.from|base64\.b64decode)\b|atob\s*\([^)]*\)\s*\)?\s*(?:\)|;)?\s*.{0,20}\beval\s*\(|Buffer\.from\s*\([^)]*,\s*['"`]base64['"`]\s*\)[^;]{0,40}\b(?:eval|Function|exec)\s*\(|base64\.b64decode\s*\([^)]*\)[^;]{0,40}\b(?:exec|eval)\s*\(/,
     severity: 'high',
     confidence: 'strong',
     category: 'injection',
@@ -114,7 +152,19 @@ export const SOURCE_PATTERNS: SourcePattern[] = [
     id: 'MTC-SRC-006',
     title: 'Reads a sensitive credential path or dumps the environment',
     lang: 'any',
-    pattern: /~\/\.ssh|id_rsa\b|\.aws\/credentials|\.config\/gcloud|\.netrc\b|\.docker\/config\.json|JSON\.stringify\s*\(\s*process\.env\s*\)|\bdict\s*\(\s*os\.environ\s*\)|json\.dumps\s*\(\s*(?:dict\s*\(\s*)?os\.environ/,
+    // Narrowed to REAL secret material and REAL environment serialization:
+    //  • Private-key files by name (id_rsa/id_dsa/id_ecdsa/id_ed25519) and the
+    //    concrete credential stores (.aws/credentials, gcloud, .netrc, .npmrc,
+    //    .git-credentials, docker config) — NOT bare `~/.ssh` (matched `.ssh/config`,
+    //    a host-alias file, and `.ssh/**` blocklists in security tools) and NOT
+    //    `.p12`/`.pem` extensions alone (ubiquitous in scanner rule tables).
+    //  • Environment DUMP only when it is SERIALIZED (JSON.stringify(process.env)
+    //    / json.dumps(os.environ)) — the bare `dict(os.environ)` copy-for-subprocess
+    //    idiom was DROPPED: it is the standard way to tweak env before spawning a
+    //    child (prefect, and delimit-cli which actually SCRUBS leakable vars), not
+    //    an exfiltration source. This rule is capability-only (does not score),
+    //    so precision here is about honest findings, not the grade.
+    pattern: /\bid_(?:rsa|dsa|ecdsa|ed25519)\b|(?:^|[\/'"`\s])\.aws\/credentials|(?:^|[\/'"`\s])\.config\/gcloud|(?:^|[\/'"`\s])\.netrc\b|(?:^|[\/'"`\s])\.npmrc\b|(?:^|[\/'"`\s])\.git-credentials\b|(?:^|[\/'"`\s])\.docker\/config\.json|JSON\.stringify\s*\(\s*process\.env\s*\)|json\.dumps\s*\(\s*(?:dict\s*\(\s*)?os\.environ/,
     severity: 'high',
     confidence: 'strong',
     category: 'exfiltration',
@@ -152,7 +202,15 @@ export const SOURCE_PATTERNS: SourcePattern[] = [
     lang: 'any',
     // eval(/Function( applied to something that is NOT a plain string literal —
     // i.e. a variable or expression. eval("2+2") is not matched; eval(x) is.
-    pattern: /\b(?:eval|new\s+Function)\s*\(\s*(?!['"`)\s])/,
+    // Receiver-guarded exactly like SRC-001: `(?<![.$\w'"`])` before `eval`
+    // rejects `.eval(`, `$eval(`/`$$eval(` (Puppeteer/Playwright DOM helpers),
+    // `redis.eval(`/`client.eval(` (Redis Lua), `self.eval(`/`this.eval(`/
+    // `globalThis.eval(`, and quote-prefixed `"eval(`/`` `eval( `` string-literal
+    // text — the systematic false-positive classes an audit found across C/D/F —
+    // while a genuine bare `eval(var)` / `new Function(var)` still matches. The
+    // wasm-bindgen / empty / escaped `new Function` bundle idioms are excluded in
+    // source.ts (isVendoredEvalIdiom), mirroring the SRC-001 allowlist.
+    pattern: /(?<![.$\w'"`])eval\s*\(\s*(?!['"`)\s])|\bnew\s+Function\s*\(\s*(?!['"`)\s])/,
     severity: 'high',
     confidence: 'strong',
     category: 'injection',
@@ -163,7 +221,12 @@ export const SOURCE_PATTERNS: SourcePattern[] = [
     id: 'MTC-SRC-007',
     title: 'Unsafe deserialization',
     lang: 'any',
-    pattern: /\bpickle\.loads?\s*\(|yaml\.load\s*\((?![^)]*Loader\s*=\s*yaml\.SafeLoader)|node-serialize|\bunserialize\s*\(|marshal\.loads?\s*\(/,
+    // js-yaml v4+ made `yaml.load()` SAFE by default (it removed the unsafe tags),
+    // so a bare `yaml.load(` is NOT a vulnerability in JavaScript — flagging it was
+    // an inverted false positive on ~250 packages. Match only the unambiguously
+    // unsafe forms: Python `yaml.unsafe_load` / `yaml.load(…Loader=…Loader)`, pickle
+    // and marshal, and the node-serialize gadget (anchored to its module token).
+    pattern: /\bpickle\.loads?\s*\(|\byaml\.unsafe_load\s*\(|\byaml\.load\s*\([^)]*Loader\s*=\s*(?:yaml\.)?(?:Unsafe)?Loader\b|node-serialize|\bmarshal\.loads?\s*\(/,
     // Medium, not high: presence alone cannot tell whether the data being
     // deserialized is attacker-reachable. Choosing the unsafe API where a safe
     // one exists is a negligence signal worth surfacing — not an F-driver.

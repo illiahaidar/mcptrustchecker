@@ -11,6 +11,7 @@
 import type { Detector, DetectorContext, Finding, PackageMeta, ResolvedConfig } from '../types.js';
 import {
   COMBOSQUAT_SUFFIXES,
+  GENERIC_COMBO_TOKENS,
   FAKE_SCOPE_PATTERNS,
   KNOWN_SQUATS,
   PROTECTED_PACKAGES,
@@ -121,10 +122,14 @@ export function analyzeTyposquat(name: string, meta: PackageMeta | undefined, co
       }
     }
 
-    // 6) Combosquat: strip decorative suffixes and re-compare.
+    // 6) Combosquat: strip decorative suffixes and re-compare. Two gates stop the
+    //    dominant false positive — every idiomatic `@vendor/mcp-server` matched the
+    //    bare protected token "mcp" (3 chars), billing 4× across protected entries
+    //    that share that bareName. A residue MUST be >=5 chars AND not a generic
+    //    ecosystem token, so "mcp"/"server"/"api" can never be a squat base.
     let stripped = bare;
     for (const suf of COMBOSQUAT_SUFFIXES) if (stripped.endsWith(suf)) stripped = stripped.slice(0, -suf.length);
-    if (stripped !== bare && stripped === protBare) {
+    if (stripped !== bare && stripped === protBare && stripped.length >= 5 && !GENERIC_COMBO_TOKENS.has(stripped)) {
       push('MTC-SUP-006', 'medium', 'heuristic', `Possible combosquat of ${prot}`,
         `"${name}" is "${prot}" with a decorative suffix — a common combosquat pattern.`, prot);
     }
@@ -141,18 +146,63 @@ export function analyzeProvenance(meta: PackageMeta): Finding[] {
   const scripts = meta.scripts ?? {};
   const lifecycle = ['preinstall', 'install', 'postinstall'].filter((s) => scripts[s]);
   if (lifecycle.length > 0) {
-    const hasPre = lifecycle.includes('preinstall');
+    // Severity by the script CONTENT, not by mere presence. An install hook is
+    // ubiquitous and mostly benign (npm rebuild, only-allow pnpm, husky, node-gyp,
+    // patch-package, a version guard) — charging those the same as a remote-binary
+    // dropper inverts severity vs risk. Escalate only on real danger signals.
+    const cmds = lifecycle.map((s) => scripts[s] ?? '').join(' ; ');
+    const c = cmds.toLowerCase();
+    // Unwrap `node -e "<body>"` / `node --eval '<body>'`, then blank out every
+    // string/backtick literal. What remains is the CODE the hook actually runs —
+    // so a URL, a `.sh`, or an ANSI escape that lives only inside a printed string
+    // (a `console.log('… https://memoir.sh')` install banner) no longer reads as a
+    // download or an executable artifact.
+    const unwrapped = c.replace(/\bnode\s+(?:-e|--eval)\s+(['"])([\s\S]*?)\1/g, ' $2 ');
+    const codeOnly = unwrapped.replace(/(['"`])(?:\\.|(?!\1)[\s\S])*?\1/g, '""');
+    const pipedToShell =
+      /\b(curl|wget|fetch|iwr|invoke-webrequest)\b[^\n]*\|\s*(sh|bash|zsh|node|python\d?|ruby|perl)\b/.test(codeOnly) ||
+      /\b(base64\s+(-d|--decode)|atob\s*\(|\beval\s*\(|iex\b|powershell\b[^\n]*-enc)/.test(codeOnly);
+    // A real remote-binary dropper needs BOTH a network fetch AND an
+    // execute-of-the-fetched-artifact — tested on CODE only (strings blanked), so
+    // a printed URL cannot manufacture either half.
+    const fetchTok = /\b(curl|wget|iwr|invoke-webrequest|node-fetch|axios)\b|\bfetch\s*\(|\bdownload\s*\(|https?:\/\/\S+\.(?:sh|exe|bin|zip|gz|tgz|dll|dylib|so)\b/.test(codeOnly);
+    const execArtifact = /\bchmod\s+\+?x\b|\|\s*(?:sh|bash|zsh)\b|\b(?:sh|bash)\s+-c\b|\bspawn(?:sync)?\s*\(|\bexec(?:sync)?\s*\(|&&\s*\.?\/|\.\/[\w./-]+\.(?:sh|bin)\b/.test(codeOnly);
+    // A real remote-binary dropper needs BOTH halves; a hook that only PRINTS a
+    // banner (its URL/`.sh`/ANSI live inside a blanked string) trips neither and
+    // falls through to the honest low/heuristic base tier below.
+    const remoteBinary = fetchTok && execArtifact;
+    let severity: Finding['severity'];
+    let confidence: Finding['confidence'];
+    let title: string;
+    let why: string;
+    if (pipedToShell) {
+      severity = 'high';
+      confidence = 'confirmed';
+      title = 'Install script pipes a remote download into a shell / evals a payload';
+      why = 'The install hook fetches and executes remote code before you ever import the package — the canonical supply-chain compromise.';
+    } else if (remoteBinary) {
+      severity = 'medium';
+      confidence = 'strong';
+      title = 'Install script downloads and runs a remote binary';
+      why = 'The install hook fetches an external artifact and makes it executable — vet the source and the binary before trusting it.';
+    } else {
+      // Benign one-liner (npm rebuild, only-allow, husky…) or a script FILE whose
+      // body is not in the manifest: a mild, worth-noting signal, never an F-driver.
+      severity = 'low';
+      confidence = 'heuristic';
+      title = 'Package runs install-time scripts';
+      why = 'An install hook runs at install time; most are routine build/setup, but review what it does before trusting it.';
+    }
     findings.push({
       ruleId: 'MTC-SUP-010',
-      title: `Package runs install-time scripts (${lifecycle.join(', ')})`,
+      title: `${title} (${lifecycle.join(', ')})`,
       category: 'supply-chain',
-      severity: hasPre ? 'high' : 'medium',
-      confidence: 'strong',
-      description:
-        `"${name}" executes ${lifecycle.join('/')} script(s) at install time. The large majority of malicious ` +
-        `packages abuse install hooks to run code before you ever import them.`,
+      severity,
+      confidence,
+      description: `"${name}" executes ${lifecycle.join('/')} script(s) at install time. ${why}`,
       remediation: 'Review the scripts; install with --ignore-scripts where possible and vet what they do.',
       location: { kind: 'package', name },
+      evidence: cmds.slice(0, 160),
       owasp: 'LLM03:2025 Supply Chain',
       references: SUP_REF,
       data: { scripts: lifecycle },
@@ -183,11 +233,18 @@ export function analyzeProvenance(meta: PackageMeta): Finding[] {
   }
 
   if (meta.repositoryUrl === null) {
+    // When an --online scan already classified verification (repo/none/source/
+    // vendor), the missing-repository fact is ALREADY priced by the verification
+    // client term (none = -5). Re-charging it here as a scored supply-chain finding
+    // double-taxes the same fact, so demote to `info` (recorded, never scored) —
+    // mirroring MTC-SUP-012 (license). Offline (`unknown`) the term is skipped, so
+    // keep the low signal there as the only repository evidence.
+    const known = meta.verification !== undefined && meta.verification !== 'unknown';
     findings.push({
       ruleId: 'MTC-SUP-011',
-      title: 'Package has no source repository',
+      title: 'Package declares no source repository',
       category: 'supply-chain',
-      severity: 'low',
+      severity: known ? 'info' : 'low',
       confidence: 'strong',
       description: `"${name}" declares no repository URL, so its published artifact cannot be compared against reviewable source.`,
       remediation: 'Prefer packages that link to public, reviewable source.',

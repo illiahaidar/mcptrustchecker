@@ -1,4 +1,6 @@
-# v1.8.0 — MCP-threat detection on package scans (methodology `mcptrustchecker-1.8`)
+# v1.8.0 — Static tool extraction + client-adoption-risk score · MCP-threat detection on package scans
+
+Methodology `mcptrustchecker-1.8`.
 
 Turns the scanner from an advanced npm auditor into a real **MCP-threat** scanner.
 One engine — the CLI, the registry and the hosted API give identical results.

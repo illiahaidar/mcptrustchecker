@@ -5,6 +5,104 @@ deterministic: the **methodology version** is bumped whenever a change could
 move a score, so a grade is always reproducible against the version that
 produced it.
 
+## 1.9.0 — methodology `mcptrustchecker-1.9`
+
+A full **adequacy audit of every grade** over the live 31,300-package corpus —
+checking each band for both *false positives* (benign code graded down) and
+*false negatives* (real threats graded up) — found the scanner's remaining error
+was concentrated in **which axis one rule fed**, not in its detection. Fixing that
+plus eight precision guards moves grades, so **the methodology version moves to
+`mcptrustchecker-1.9`**.
+
+### Changed — `MTC-SRC-010` moves to the capability axis (this is what moves grades)
+
+- `eval(value)` / `new Function(value)` is the **same primitive** as `MTC-SRC-001`,
+  which has always been capability-only. Evaluating a runtime value is what an
+  honest code-runner, interpreter, template engine or notebook tool *does*: it is
+  **blast radius, not evidence of malice**. Scoring it as a threat while its
+  identical sibling was capability-only double-charged the same capability and was
+  the single largest source of unjustified sub-B grades.
+- `MTC-SRC-010` still fires, is still reported, and now **raises the capability
+  level** (`code-exec`) instead of subtracting from the trust grade.
+- **The genuine threat is preserved, not dropped:** the assembled-command **+**
+  eval co-presence dropper still scores via `MTC-SRC-011`; decode-then-execute
+  droppers stay on `MTC-SRC-004`; untrusted input *reaching* an eval sink remains
+  the toxic-flow layer's job (`MTC-FLOW-*`); every hard gate is unchanged.
+
+### Fixed — precision guards (false-positive removal only)
+
+- **`MTC-SRC-004` / `MTC-SRC-007`** now honour the string-literal and comment
+  guards, so a security scanner that catalogues these shapes as *data* no longer
+  flags itself. `isInsideStringLiteral` was rewritten as a small multi-line lexer
+  that tracks `'`/`"` strings (with escapes), **Python triple-quotes** and **JS
+  template literals across lines**, and skips `//` and `/* */` so a quote inside a
+  comment cannot throw off string parity.
+- **`MTC-SRC-004`** exec sinks are **call-anchored** (`eval\s*\(`, `Function\s*\(`,
+  `exec\s*\(`): a decoded blob followed by the *word* `evaluate` is no longer a
+  decode-and-execute dropper. The canonical `eval(atob(…))` form is untouched.
+- **`MTC-UNI-009`** tokenizes on **letter runs** instead of whitespace, so a
+  bilingual compound (`MCP-сервер`, `voximplant_клиент`) is two single-script runs
+  rather than one "mixed-script" token. A contiguous homoglyph (`pаypal`) still fires.
+- **`MTC-SRC-008`** placeholder detection covers `-HERE`/`YOUR-…-KEY` forms and
+  letter-digit filler bodies, and a secret is downgraded when the file is a
+  **corroborated fixture** (three or more distinct secret shapes, or a
+  `leak`/`gitleaks`/`fixture` marker). A lone real credential still gates.
+- **`MTC-INJ-CMD-1`**: the self-documenting-tool guard is underscore-aware, so a
+  tool named `adb_rm` is recognised as a delete tool documenting itself — while
+  `transform`/`confirm`/`alarm` still never match.
+- **`MTC-SRC-009`** no longer treats a `RegExp`-literal / `RegExp`-named receiver
+  or a GraphQL/Cypher statement as a shell sink; a hard allowlist keeps every
+  `child_process` alias (`cp.exec`, `child_process_1.execSync`) firing, and ssh2's
+  `conn.exec(cmd)` is deliberately still a shell sink.
+- **Non-runtime paths**: `tools` no longer matches at *any* depth. MCP servers
+  implement their runtime request handlers in `src/tools` / `dist/tools`, so the
+  old token silenced real findings in the server's own code; only a **repo-root**
+  `tools/` is treated as maintainer tooling now. AWS's documented example-key
+  roots are recognised as placeholders, so honeypot bait is not reported as a leak.
+
+### Also included — the low-grade precision overhaul (landed after the 1.8.0 tag)
+
+Upgrading from `1.8.0` also brings the precision pass that followed it: an audit of
+every C/D/F server found the low band was dominated by lexical false positives.
+
+- **`MTC-SRC-008`** (the engine's only `confirmed` rule, and therefore the only
+  driver of the confirmed-high gate) no longer "confirms" on documentation
+  placeholders (AWS's own example keys, the jwt.io sample token, `xoxb-test-token`),
+  on **public-by-design** keys (Supabase `role:anon` JWTs, Firebase/web API keys) or
+  on test/example/vendored paths. Only a genuine private credential in runtime code
+  keeps `confirmed` — and keeps gating.
+- **`MTC-SRC-004`** dropped its two standalone data-literal arms (`\x`-escape runs
+  and `String.fromCharCode` lists). A byte table with no decoder and no exec sink —
+  indentation, an ASCII alphabet, a codepage table, a binary test fixture — is data,
+  not a payload. The four decode-and-execute arms are unchanged.
+- **`MTC-SRC-010`** gained the receiver/quote guard `MTC-SRC-001` already had, so
+  `page.$eval`, `redis.eval(luaScript)`, `self.eval`, `globalThis.eval` and
+  quote-prefixed text no longer read as dynamic evaluation, plus a vendored-idiom
+  allowlist (wasm-bindgen glue, empty/escaped `new Function`).
+- **`MTC-SRC-009`** recognises a database `.exec()` by receiver *and* by statement
+  keyword (`SAVEPOINT`/`RELEASE`/`DETACH`/`ANALYZE`/`REINDEX`, escape-tolerant so a
+  minified `db.exec("\nPRAGMA …")` still reads as SQL).
+- **`MTC-SRC-006`** narrowed to real key material and real environment
+  *serialization*: bare `~/.ssh` (which matched `.ssh/config` and security-tool
+  blocklists) and the benign `dict(os.environ)` copy-before-subprocess idiom no
+  longer qualify.
+- **`MTC-SUP-010`** only escalates to "downloads and runs a remote binary" when the
+  install body contains **both** a fetch and an execute-of-the-fetched-artifact,
+  tested against the script's code with string literals blanked — so a
+  `console.log` banner that merely prints a URL is not a dropper.
+- **`MTC-SRC-011`** now names the concrete files its two halves came from, so a
+  co-presence claim is auditable rather than a generic accusation.
+
+### Unchanged — deliberately
+
+- The **capability/threat separation**, all severity weights, confidence
+  multipliers, category caps, grade bands and the hard-gate ladder
+  (confirmed-critical → F, any critical → D, confirmed-high → D/C).
+- **`MTC-FLOW-002` stays capability-only.** It is cross-tool *by construction*;
+  the single-tool "lethal trifecta" is `MTC-FLOW-001`, which is
+  confirmed/critical and already hard-gates to F — so no additional gate is
+  warranted and none was added.
+
 ## 1.8.0 — methodology `mcptrustchecker-1.8`
 
 This release turns the scanner from an advanced npm auditor into a real
@@ -69,6 +167,32 @@ findings for identical input. **The methodology version moves to
   read-only getters (`get_*`/`list_*` are never an egress sink), web-fetch URL
   params (a `fetch(url)` reads, it does not egress) and local file-move
   `destination` paths.
+- **Implementation-level (MTC-SRC) precision**: the `Function("m","return
+  import(m)")` optional-dependency loader is recognised as a dynamic import, not a
+  HIGH "dynamic code execution" (the import is still reported once, at medium); and
+  a capability sink (exec/shell/dynamic-load) found in packaging/dev/install
+  tooling (`scripts/`, `tools/`, …) is right-sized to a low note "in packaging/dev
+  tooling" instead of overstated as a HIGH threat "in server code" — an install
+  script's shell is already surfaced by `MTC-SUP-010`.
+- **Full-population precision hardening** (a 26-agent audit re-ran the engine over
+  the real corpus and measured every grade-B driver). Fixes, all with regression
+  tests: MTC-SRC-002/001 receiver-guarded so a bundled `$exec(/re/)` /
+  `.eval(` / benign vendored `Function` idiom (get-intrinsic, function-bind,
+  global-this/zod probes) is no longer command-exec; `.d.ts` declaration files and
+  comment/JSDoc lines never match; `db.exec(\`SELECT …\`)` is a database call, not
+  MTC-SRC-009 command injection; MTC-SRC-007 no longer flags the SAFE js-yaml v4
+  `yaml.load()`; capability tags for code-exec/file-write require OPERATIVE (name/
+  param) evidence, not prose; a `path` param no longer fabricates a sensitive-source
+  read (collapsing spurious toxic flows); a tooling-downgraded finding no longer
+  inflates the capability level (the downgrade was cosmetic); CRITICAL blast radius
+  now requires a real linkage, not mere co-occurrence; MTC-SUP-006 combosquat no
+  longer fires on idiomatic `@vendor/mcp-server` names; MTC-SUP-010 severity is by
+  script CONTENT (a piped remote dropper is high, `npm rebuild` is low); MTC-SUP-011
+  is unscored once verification was checked (no double-charge); `verification=none`
+  is coverage-aware (−2 when the source was fully read, −5 only when it was not);
+  and the per-file source cap rose 512 KB → 4 MB so bundled single-file `dist`
+  builds are analysed instead of dropped to metadata coverage. Net effect: many
+  genuine A packages previously mislabelled B are graded correctly.
 
 ### Added — verification as an engine signal (with a `repo` tier)
 

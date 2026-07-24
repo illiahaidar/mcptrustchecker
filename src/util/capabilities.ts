@@ -33,6 +33,10 @@ export function extractToolCapability(tool: ToolDef): ToolCapability {
   const desc = typeof tool?.description === 'string' ? tool.description : '';
   const haystack = normalizeForMatch(`${name} ${desc}`);
   const tokens = tokenize(`${name} ${desc}`);
+  // Operative surface = the tool NAME only (what the tool DOES), used for the
+  // high-impact capability tags below.
+  const nameHay = normalizeForMatch(name);
+  const nameTokens = tokenize(name);
   const reasons: Partial<Record<CapabilityTag, string[]>> = {};
   const tags = new Set<CapabilityTag>();
 
@@ -41,10 +45,19 @@ export function extractToolCapability(tool: ToolDef): ToolCapability {
     (reasons[tag] ??= []).push(why);
   };
 
+  // `code-exec` and `file-write` are the tags that drive the biggest blast-radius
+  // penalty (-6/-10). Require OPERATIVE evidence — the keyword in the tool NAME, not
+  // in prose — for them: a read-only analyzer DESCRIBED as "detects shell/eval usage"
+  // must not itself be tagged command-execution. Param-name signals (below) still add
+  // operative evidence. Other tags keep name+description matching.
+  const OPERATIVE_ONLY = new Set<CapabilityTag>(['code-exec', 'file-write']);
   for (const sig of CAPABILITY_SIGNALS) {
+    const operative = OPERATIVE_ONLY.has(sig.tag);
+    const hay = operative ? nameHay : haystack;
+    const toks = operative ? nameTokens : tokens;
     for (const kw of sig.keywords) {
-      if (keywordMatches(haystack, tokens, kw)) {
-        addReason(sig.tag, `keyword "${kw}"`);
+      if (keywordMatches(hay, toks, kw)) {
+        addReason(sig.tag, `keyword "${kw}"${operative ? ' in tool name' : ''}`);
         break; // one reason per signal is enough
       }
     }

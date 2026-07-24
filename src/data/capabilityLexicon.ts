@@ -184,11 +184,18 @@ export const PARAM_NAME_SIGNALS: { tag: CapabilityTag; names: string[] }[] = [
   { tag: 'code-exec', names: ['command', 'cmd', 'script', 'shell', 'exec', 'eval'] },
   // 'query' is intentionally omitted — a search "query" is not sensitive-data
   // access; real DB reads are caught by tool-name verbs (query_db, run_sql, …).
-  { tag: 'sensitive-source', names: ['path', 'filepath', 'filename', 'secret', 'sql'] },
+  // A parameter merely NAMED path/filepath/filename is a path-TRAVERSAL precondition
+  // (see PATH_PARAM_NAMES / MTC-CAP-008), NOT evidence the tool reads sensitive DATA.
+  // Tagging it sensitive-source fabricated the read-leg of the toxic-flow trifecta on
+  // ~750 packages that touch no sensitive data. Keep only genuinely-sensitive names.
+  { tag: 'sensitive-source', names: ['secret', 'sql'] },
 ];
 
 /** URL/host-shaped parameter names — an unconstrained one is an SSRF precondition. */
-export const SSRF_PARAM_NAMES = ['url', 'uri', 'host', 'endpoint', 'target', 'server', 'address', 'hostname'];
+// Only genuinely URL/host-shaped names. 'endpoint'/'target'/'server'/'address' were
+// removed: they are overwhelmingly config-setter or generic fields, not a fetched
+// URL, and drove MTC-CAP-007 false positives on servers that STORE rather than call.
+export const SSRF_PARAM_NAMES = ['url', 'uri', 'host', 'hostname'];
 
 /** Path-shaped parameter names — an unconstrained one is a path-traversal precondition. */
 export const PATH_PARAM_NAMES = ['path', 'filepath', 'filename', 'file', 'dir', 'directory'];

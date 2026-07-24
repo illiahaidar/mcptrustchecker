@@ -29,10 +29,19 @@ export function computeCapabilityProfile(
   const ruleTag: Record<string, CapabilityTag> = {
     'MTC-SRC-001': 'code-exec',
     'MTC-SRC-002': 'code-exec',
+    // SRC-010 (dynamic eval of a non-literal) is code-exec capability, same as
+    // SRC-001 — moved off the threat axis (see CAPABILITY_RULES); it must still
+    // raise the blast radius here or the eval sink would vanish from both axes.
+    'MTC-SRC-010': 'code-exec',
     'MTC-SRC-003': 'external-sink',
     'MTC-SRC-006': 'sensitive-source',
   };
   for (const f of findings) {
+    // A source finding downgraded to packaging/dev tooling (non-runtime) ships,
+    // but it is not the server's request-handling surface — it must NOT inflate
+    // the client's blast radius. Without this the tooling downgrade is cosmetic:
+    // the finding still buys the full -6/-10 capability penalty.
+    if (f.data?.nonRuntime) continue;
     const tag = ruleTag[f.ruleId];
     if (tag) tagSet.add(tag);
   }
@@ -62,7 +71,14 @@ export function computeCapabilityProfile(
 
   if (crossTrifecta) bump('high', 'untrusted-input, sensitive-source and egress co-exist across tools (toxic-flow surface)');
   if (selfContained) bump('critical', 'a single tool completes the exfiltration trifecta by itself');
-  if (has('code-exec') && has('untrusted-input')) bump('critical', 'untrusted input can reach code execution');
+  // CRITICAL from code-exec + untrusted-input requires an actual LINKAGE, not mere
+  // co-occurrence: a real toxic flow connecting the two, or a runtime assembled-
+  // command finding (MTC-SRC-009). Co-presence alone stays at `high` (-6) — else
+  // ~700 packages eat an extra -4 for two unrelated tools existing in one server.
+  const assembledCommand = findings.some((f) => f.ruleId === 'MTC-SRC-009' && !f.data?.nonRuntime);
+  if (has('code-exec') && has('untrusted-input') && (selfContained || crossTrifecta || assembledCommand)) {
+    bump('critical', 'untrusted input can reach code execution');
+  }
 
   // De-duplicate reasons while preserving order.
   const seen = new Set<string>();

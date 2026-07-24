@@ -15,8 +15,13 @@ import { surfaceFromManifest } from './manifest.js';
 export const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'coverage', '.next', '__pycache__', 'venv', '.venv', 'vendor']);
 export const SOURCE_LIMITS = {
   maxFiles: 400,
-  maxFileBytes: 512 * 1024, // 512 KB per file
-  maxTotalBytes: 12 * 1024 * 1024, // 12 MB total
+  // Modern MCP servers ship a single bundled esbuild/tsup `dist` file that is
+  // routinely 0.5–4 MB. A 512 KB cap silently DROPPED those, so the package was
+  // graded coverage=metadata (−8) AND every source detector ran on zero bytes —
+  // an unfair penalty and a security false-negative (a bundled malicious server
+  // scored like an empty stub). 4 MB recovers the vast majority of bundled builds.
+  maxFileBytes: 4 * 1024 * 1024, // 4 MB per file
+  maxTotalBytes: 24 * 1024 * 1024, // 24 MB total
 } as const;
 const MAX_FILES = SOURCE_LIMITS.maxFiles;
 const MAX_FILE_BYTES = SOURCE_LIMITS.maxFileBytes;

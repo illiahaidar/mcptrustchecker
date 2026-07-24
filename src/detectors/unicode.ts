@@ -127,8 +127,12 @@ function scriptsOf(text: string): Set<string> {
     ['Hebrew', /\p{Script=Hebrew}/u],
   ];
   // Evaluate per token so a legitimately multilingual description isn't flagged;
-  // only a single token that mixes scripts is confusable.
-  for (const token of text.split(/\s+/)) {
+  // only a single token that mixes scripts is confusable. Tokenize on LETTER RUNS
+  // (split on every non-letter, incl. hyphens/underscores/digits) not whitespace,
+  // so a bilingual COMPOUND like "MCP-сервер" or "voximplant_клиент" splits into
+  // separate single-script runs instead of one mixed token — a real homoglyph
+  // ("pаypal", "gоogle") has no separator and still stays one mixed run.
+  for (const token of text.split(/[^\p{L}]+/u)) {
     if (token.length < 2) continue;
     const tokenScripts = new Set<string>();
     for (const [name, re] of named) if (re.test(token)) tokenScripts.add(name);

@@ -102,3 +102,10 @@ export const KNOWN_SQUATS: Record<string, string> = {
 
 /** Combosquat suffixes stripped before comparison (e.g. `foo-js` ≈ `foo`). */
 export const COMBOSQUAT_SUFFIXES = ['-js', '-py', '-core', '-utils', '-mcp', '-server', '-official', '-cli'];
+
+/** Generic ecosystem tokens that can never be a squat BASE — `@vendor/mcp-server`
+ *  strips to "mcp", which is not an impersonation of anyone. A combosquat residue
+ *  matching one of these (or shorter than 5 chars) is ignored. */
+export const GENERIC_COMBO_TOKENS = new Set([
+  'mcp', 'server', 'client', 'sdk', 'api', 'core', 'tools', 'tool', 'app', 'cli', 'lib', 'utils', 'common', 'agent',
+]);

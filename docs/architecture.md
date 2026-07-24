@@ -16,18 +16,26 @@ src/
     live.ts               sandboxed stdio / HTTP via the MCP SDK
     oauth.ts              OAuth 2.0 browser sign-in for protected endpoints (--login)
     clientConfig.ts       claude_desktop_config.json etc.
+    discover.ts           find installed MCP client configs (zero-config scan)
     npm.ts                package metadata + artifact URL/hash (--online)
     archive.ts            bounded in-memory tar/gzip/zip readers (no deps, no exec)
     packageSource.ts      fetch + verify + read the published npm/PyPI source
+    source.ts             read a local package directory's source files
+    toolExtract.ts        reconstruct the tool surface from published source
+    publisher.ts          classify verification (vendor / provenance / repo / none)
     index.ts              resolveTargets(): pick the safest acquisition path
   detectors/            one file per stage; each emits Finding[]
-    unicode.ts injection.ts capability.ts toxicFlow.ts supplyChain.ts posture.ts
+    unicode.ts injection.ts capability.ts toxicFlow.ts flowGraph.ts
+    source.ts             implementation-level analysis (the MTC-SRC-* family)
+    collision.ts supplyChain.ts posture.ts meta.ts
     index.ts              the detector registry
   scoring/
     model.ts              all weights / caps / gates (the auditable constants)
+    capability.ts         capability level from capability findings
+    coverage.ts           how much of the target the scan could read
     index.ts              computeScore()
   data/                 bundled, version-pinned threat intelligence (plain data)
-    unicode.ts injectionPatterns.ts capabilityLexicon.ts
+    unicode.ts injectionPatterns.ts capabilityLexicon.ts sourcePatterns.ts
     protectedPackages.ts knownCves.ts confusables.ts ruleCatalog.ts
   report/               terminal | json | sarif | markdown | badge
   util/                 text extraction, distance, hashing, capabilities, ansi

@@ -31,6 +31,7 @@ import { renderMarkdown } from '../report/markdown.js';
 import { renderBadge } from '../report/badge.js';
 import { GRADE_RANK } from '../scoring/model.js';
 import { RULE_CATALOG, findRule } from '../data/ruleCatalog.js';
+import { isCapabilityRule } from '../scoring/model.js';
 import { METHODOLOGY_VERSION, TOOL_VERSION } from '../version.js';
 import { c } from '../util/ansi.js';
 import { parseHeaderArgs } from '../util/headers.js';
@@ -553,7 +554,10 @@ function printRules(): void {
       lines.push(c.gray(`— ${r.category} —`));
       lastCat = r.category;
     }
-    lines.push(`  ${c.bold(r.id.padEnd(16))} ${c.gray(`[${r.severity}]`)} ${r.title}`);
+    // Mirror docs/rules.md: mark the rules that describe blast radius rather than
+    // a trust threat, so the listing shows which axis each rule feeds.
+    const cap = isCapabilityRule(r.id) ? c.gray(' [capability]') : '';
+    lines.push(`  ${c.bold(r.id.padEnd(16))} ${c.gray(`[${r.severity}]`)} ${r.title}${cap}`);
   }
   process.stdout.write(lines.join('\n') + '\n');
 }
@@ -562,9 +566,16 @@ function printExplain(id: string | undefined): void {
   if (!id) fail('usage: mcptrustchecker explain <ruleId>');
   const rule = findRule(id!);
   if (!rule) fail(`unknown rule "${id}". Run "mcptrustchecker rules" to list them.`);
+  // Which AXIS the rule feeds is the single most load-bearing fact about it: a
+  // capability rule describes blast radius and never lowers the Trust grade,
+  // while a threat rule does. Stating it here keeps the CLI in step with
+  // docs/rules.md (which marks the same rules **[capability]**).
+  const axis = isCapabilityRule(rule!.id)
+    ? 'capability — raises the Capability level, never lowers the Trust grade'
+    : 'trust threat — scored, can lower the Trust grade';
   process.stdout.write(
     `${c.bold(rule!.id)} — ${rule!.title}\n` +
-      `  category: ${rule!.category}\n  severity: ${rule!.severity}\n\n  ${rule!.summary}\n`,
+      `  axis: ${axis}\n  category: ${rule!.category}\n  severity: ${rule!.severity}\n\n  ${rule!.summary}\n`,
   );
 }
 

@@ -118,22 +118,21 @@ test('CAPABILITY_EXPOSURE subtracts the right points per level', () => {
   assert.equal(critical.threatScore, 100);
 });
 
-test('VERIFICATION_DISCOUNT: none < repo < source = vendor, and unknown is SKIPPED', () => {
-  const base = { capabilityLevel: 'minimal', coverageLevel: 'live' } as const; // both 0
-  const none = computeScore([], { ...base, verification: 'none' });
-  const repo = computeScore([], { ...base, verification: 'repo' });
-  const source = computeScore([], { ...base, verification: 'source' });
-  const vendor = computeScore([], { ...base, verification: 'vendor' });
-  const unknown = computeScore([], { ...base, verification: 'unknown' });
-  assert.equal(none.score, 95); // -5, source cannot even be located
-  assert.equal(repo.score, 99); // -1, public repo the client can read
-  assert.equal(source.score, 100); // -0, provenance IS the reward
-  assert.equal(vendor.score, 100); // -0, vendor authority
-  assert.equal(unknown.score, 100); // term skipped
+test('VERIFICATION_DISCOUNT ladder: none < repo < source = vendor; none is coverage-aware; unknown SKIPPED', () => {
+  // Thin coverage (metadata) → `none` is the full -5: the artifact is unverifiable.
+  const thin = { capabilityLevel: 'minimal', coverageLevel: 'metadata' } as const; // cap 0, cov -8
+  const pen = (v: 'none' | 'repo' | 'source' | 'vendor', ctx = thin) =>
+    clientLine(computeScore([], { ...ctx, verification: v }), 'verification-discount')!.appliedPenalty;
+  assert.equal(pen('none'), 5); // source cannot be located AND was not read
+  assert.equal(pen('repo'), 1); // public repo the client can read
+  assert.equal(pen('source'), 0); // provenance IS the reward
+  assert.equal(pen('vendor'), 0); // vendor authority
+  // Coverage-aware: when the shipped source was fully READ, `none` is only -2 —
+  // the code is inspectable, only the repo/provenance LINK is missing.
+  assert.equal(pen('none', { capabilityLevel: 'minimal', coverageLevel: 'source' } as const), 2);
+  assert.equal(pen('none', { capabilityLevel: 'minimal', coverageLevel: 'live' } as const), 2);
   // 'unknown' emits NO verification line at all (honest omission, not a 0).
-  assert.ok(!clientLine(unknown, 'verification-discount'));
-  assert.equal(clientLine(none, 'verification-discount')!.appliedPenalty, 5);
-  assert.equal(clientLine(repo, 'verification-discount')!.appliedPenalty, 1);
+  assert.ok(!clientLine(computeScore([], { ...thin, verification: 'unknown' }), 'verification-discount'));
 });
 
 test('COVERAGE_HONESTY subtracts the right points per depth', () => {
@@ -145,12 +144,17 @@ test('COVERAGE_HONESTY subtracts the right points per depth', () => {
   assert.equal(computeScore([], { ...base, coverageLevel: 'empty' }).score, 90); // -10
 });
 
-test('a threat-clean HIGH-cap UNVERIFIED package scores high-80s, not 100', () => {
-  // threat-clean, high blast radius, anonymous publish, source read online.
-  const s = computeScore([], { capabilityLevel: 'high', coverageLevel: 'source', verification: 'none' });
-  assert.equal(s.threatScore, 100);
-  assert.equal(s.score, 89); // 100 - 6 (high) - 5 (none) - 0 (source)
-  assert.equal(s.grade, 'B');
+test('a threat-clean HIGH-cap package: A when source was read, B when only metadata', () => {
+  // Source fully read + high blast radius + no repo link → the code IS inspectable,
+  // so a missing repo is only -2: 100 - 6 - 2 = 92 = A. Powerful ≠ untrusted.
+  const read = computeScore([], { capabilityLevel: 'high', coverageLevel: 'source', verification: 'none' });
+  assert.equal(read.threatScore, 100);
+  assert.equal(read.score, 92);
+  assert.equal(read.grade, 'A');
+  // Thin coverage (code NOT read) + high cap + no repo → genuinely unknown → B.
+  const thin = computeScore([], { capabilityLevel: 'high', coverageLevel: 'metadata', verification: 'none' });
+  assert.equal(thin.score, 81); // 100 - 6 (high) - 5 (none) - 8 (metadata)
+  assert.equal(thin.grade, 'B');
 });
 
 test('a vendor + minimal + clean package stays ~100 / A', () => {

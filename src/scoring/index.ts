@@ -155,11 +155,23 @@ export function computeScore(findings: Finding[], client?: ClientScoringContext)
       // skipped entirely (a coverage caveat records the omission) — never
       // penalised or credited on a guess.
       eVer = VERIFICATION_DISCOUNT[client.verification];
+      // Coverage-aware `none`: when the shipped code was fully READ (source/live),
+      // the only gap is a missing repo/provenance LINK, not the code itself — so a
+      // missing repository is a light discount, not the full unverifiable-artifact
+      // −5. Half the catalog is `none` and most of it is source-covered; charging
+      // −5 there de-facto gates an A on a brittle, npm-default-missing repo field.
+      // Keep −5 only for thin coverage (metadata/empty), where "no repo" genuinely
+      // means the artifact is unverifiable.
+      const fullyRead = client.coverageLevel === 'source' || client.coverageLevel === 'live';
+      if (client.verification === 'none' && fullyRead) eVer = 2;
       vector.push({
         kind: 'client',
         term: 'verification-discount',
         level: client.verification,
-        label: VERIFICATION_LABEL[client.verification],
+        label:
+          client.verification === 'none' && fullyRead
+            ? 'publisher verification (unlinked) — no provenance/repo link, but the shipped source was fully read'
+            : VERIFICATION_LABEL[client.verification],
         appliedPenalty: eVer,
       });
     }

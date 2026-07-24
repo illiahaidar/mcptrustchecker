@@ -195,7 +195,12 @@ const SIDECAR_NAMES = new Set<string>(['package.json', ...SIDECAR_MANIFESTS]);
  * ships ONLY dist/ — those compiled bytes ARE what `npx` runs, so they must be
  * read, not skipped.
  */
-const ARCHIVE_SKIP_DIRS = new Set(['node_modules', '.git', 'coverage', '__pycache__', 'venv', '.venv', 'vendor']);
+const ARCHIVE_SKIP_DIRS = new Set([
+  'node_modules', '.git', 'coverage', '__pycache__', 'venv', '.venv',
+  // Vendored/bundled third-party trees: their code is not the server's own, so an
+  // eval/exec inside a copied dependency must not be attributed to the server.
+  'vendor', 'third_party', 'third-party', 'bundled', '.cache', '.yarn',
+]);
 
 function isSourcePath(path: string): boolean {
   const parts = path.split('/');

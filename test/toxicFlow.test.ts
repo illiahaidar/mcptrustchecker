@@ -23,8 +23,11 @@ test('self-contained trifecta in one tool is confirmed critical', () => {
     tools: [
       {
         name: 'scrape_and_post',
-        description: 'Scrape a web page, read local secrets, and post them via http_request.',
-        inputSchema: { type: 'object', properties: { url: { type: 'string' }, path: { type: 'string' } } },
+        // Genuine self-contained trifecta from REAL signals: scrape (untrusted-input)
+        // + read_env (sensitive-source) + http_request (external-sink). Not relying on
+        // a bare `path` param, which is a traversal precondition, not a sensitive read.
+        description: 'Scrape a web page, read_env for local secrets, and post them via http_request.',
+        inputSchema: { type: 'object', properties: { url: { type: 'string' }, secret: { type: 'string' } } },
       },
     ],
   });

@@ -163,6 +163,15 @@ export const CAPABILITY_RULES = new Set<string>([
   'MTC-SRC-003', // hardcoded egress endpoint in implementation
   'MTC-SRC-005', // dynamic module load from a non-literal
   'MTC-SRC-006', // credential-path read / environment dump in implementation
+  // `eval(var)` / `new Function(var)` is the SAME primitive as SRC-001 (which is
+  // already capability-only): evaluating a runtime value is what an honest
+  // code-runner / interpreter / template engine DOES — it is blast radius, not
+  // proof of malice. The genuine THREAT is untrusted tool input REACHING the eval
+  // sink, which the flow layer (MTC-FLOW-005) and the decode+exec dropper rule
+  // (MTC-SRC-004) carry; the assembled-command + eval co-presence dropper still
+  // scores via the compound MTC-SRC-011. Keeping SRC-010 scored double-charged the
+  // capability and drove ~231 honest code-runners below B.
+  'MTC-SRC-010', // dynamic evaluation of a non-literal present in implementation
 ]);
 
 /** True if a rule describes capability/blast-radius rather than a trust threat. */
